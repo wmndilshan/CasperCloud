@@ -1,0 +1,273 @@
+openapi: 3.0.3
+info:
+  title: CasperCloud API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+  /v1/auth/register:
+    post:
+      summary: Register user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRequest'
+      responses:
+        '201':
+          description: Created
+  /v1/auth/login:
+    post:
+      summary: Login user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRequest'
+      responses:
+        '200':
+          description: OK
+  /v1/projects:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Create project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required: [name]
+      responses:
+        '201':
+          description: Created
+    get:
+      security:
+        - bearerAuth: []
+      summary: List projects
+      responses:
+        '200':
+          description: OK
+  /v1/projects/{projectID}/images:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Create image
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageRequest'
+      responses:
+        '201':
+          description: Created
+    get:
+      security:
+        - bearerAuth: []
+      summary: List images
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+      responses:
+        '200':
+          description: OK
+  /v1/projects/{projectID}/images/{imageID}:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Get image
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+        - $ref: '#/components/parameters/ImageID'
+      responses:
+        '200':
+          description: OK
+    put:
+      security:
+        - bearerAuth: []
+      summary: Update image
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+        - $ref: '#/components/parameters/ImageID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageRequest'
+      responses:
+        '200':
+          description: OK
+    delete:
+      security:
+        - bearerAuth: []
+      summary: Delete image
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+        - $ref: '#/components/parameters/ImageID'
+      responses:
+        '204':
+          description: Deleted
+  /v1/projects/{projectID}/instances:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Create instance asynchronously
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInstanceRequest'
+      responses:
+        '202':
+          description: Accepted
+    get:
+      security:
+        - bearerAuth: []
+      summary: List instances
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+      responses:
+        '200':
+          description: OK
+  /v1/projects/{projectID}/instances/{instanceID}:
+    get:
+      security:
+        - bearerAuth: []
+      summary: Get instance
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+        - $ref: '#/components/parameters/InstanceID'
+      responses:
+        '200':
+          description: OK
+    delete:
+      security:
+        - bearerAuth: []
+      summary: Delete instance
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+        - $ref: '#/components/parameters/InstanceID'
+      responses:
+        '204':
+          description: Deleted
+  /v1/projects/{projectID}/instances/{instanceID}/start:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Start instance
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+        - $ref: '#/components/parameters/InstanceID'
+      responses:
+        '200':
+          description: OK
+  /v1/projects/{projectID}/instances/{instanceID}/stop:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Stop instance
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+        - $ref: '#/components/parameters/InstanceID'
+      responses:
+        '200':
+          description: OK
+  /v1/projects/{projectID}/instances/{instanceID}/reboot:
+    post:
+      security:
+        - bearerAuth: []
+      summary: Reboot instance
+      parameters:
+        - $ref: '#/components/parameters/ProjectID'
+        - $ref: '#/components/parameters/InstanceID'
+      responses:
+        '200':
+          description: OK
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ProjectID:
+      name: projectID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ImageID:
+      name: imageID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    InstanceID:
+      name: instanceID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    AuthRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+      required: [email, password]
+    ImageRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        source_url:
+          type: string
+        description:
+          type: string
+      required: [name, source_url]
+    CreateInstanceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        image_id:
+          type: string
+          format: uuid
+        hostname:
+          type: string
+        username:
+          type: string
+        ssh_public_key:
+          type: string
+        packages:
+          type: array
+          items:
+            type: string
+        run_commands:
+          type: array
+          items:
+            type: string
+      required: [name, image_id, hostname, username, ssh_public_key]

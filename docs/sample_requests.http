@@ -1,0 +1,109 @@
+@baseUrl = http://localhost:8080
+@token = REPLACE_BEARER_TOKEN
+@projectId = REPLACE_PROJECT_ID
+@imageId = REPLACE_IMAGE_ID
+@instanceId = REPLACE_INSTANCE_ID
+
+### Register
+POST {{baseUrl}}/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "alice@example.com",
+  "password": "password123"
+}
+
+### Login
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "alice@example.com",
+  "password": "password123"
+}
+
+### Create project
+POST {{baseUrl}}/v1/projects
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "demo-project"
+}
+
+### List projects
+GET {{baseUrl}}/v1/projects
+Authorization: Bearer {{token}}
+
+### Create image metadata
+POST {{baseUrl}}/v1/projects/{{projectId}}/images/
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "ubuntu-24.04",
+  "source_url": "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+  "description": "Ubuntu cloud image"
+}
+
+### List images
+GET {{baseUrl}}/v1/projects/{{projectId}}/images/
+Authorization: Bearer {{token}}
+
+### Get image
+GET {{baseUrl}}/v1/projects/{{projectId}}/images/{{imageId}}
+Authorization: Bearer {{token}}
+
+### Update image metadata
+PUT {{baseUrl}}/v1/projects/{{projectId}}/images/{{imageId}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "ubuntu-24.04-updated",
+  "source_url": "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
+  "description": "Ubuntu cloud image (updated metadata)"
+}
+
+### Delete image metadata
+DELETE {{baseUrl}}/v1/projects/{{projectId}}/images/{{imageId}}
+Authorization: Bearer {{token}}
+
+### Create instance (async)
+POST {{baseUrl}}/v1/projects/{{projectId}}/instances/
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "vm-1",
+  "image_id": "{{imageId}}",
+  "hostname": "vm-1",
+  "username": "ubuntu",
+  "ssh_public_key": "ssh-ed25519 AAAA... user@host",
+  "packages": ["qemu-guest-agent"],
+  "run_commands": ["echo hello > /tmp/hello.txt"]
+}
+
+### List instances
+GET {{baseUrl}}/v1/projects/{{projectId}}/instances/
+Authorization: Bearer {{token}}
+
+### Get instance
+GET {{baseUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}
+Authorization: Bearer {{token}}
+
+### Start instance
+POST {{baseUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/start
+Authorization: Bearer {{token}}
+
+### Stop instance
+POST {{baseUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/stop
+Authorization: Bearer {{token}}
+
+### Reboot instance
+POST {{baseUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}/reboot
+Authorization: Bearer {{token}}
+
+### Delete instance
+DELETE {{baseUrl}}/v1/projects/{{projectId}}/instances/{{instanceId}}
+Authorization: Bearer {{token}}

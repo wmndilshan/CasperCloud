@@ -1,0 +1,41 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go build / coverage
+bin/
+dist/
+coverage.out
+cover.out
+*.coverprofile
+
+# Vendor (uncomment if you vendor dependencies)
+# vendor/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs / runtime
+*.log
+tmp/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local docker data (if created in repo)
+.pgdata/
+.rabbitmq/
