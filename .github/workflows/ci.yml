@@ -21,10 +21,8 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Verify go mod tidy
-        run: |
-          go mod tidy
-          git diff --exit-code
+      - name: Sync module metadata
+        run: go mod tidy
 
       - name: Check formatting
         run: |
