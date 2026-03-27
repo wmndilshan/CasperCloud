@@ -47,8 +47,8 @@ func (c *Client) PublishTask(ctx context.Context, msg TaskMessage) error {
 		return err
 	}
 	return c.channel.PublishWithContext(ctx, "", InstanceTasksQueue, false, false, amqp.Publishing{
-		ContentType: "application/json",
-		Body:        body,
+		ContentType:  "application/json",
+		Body:         body,
 		DeliveryMode: amqp.Persistent,
 	})
 }

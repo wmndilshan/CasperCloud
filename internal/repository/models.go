@@ -41,12 +41,12 @@ type Instance struct {
 }
 
 type Task struct {
-	ID         uuid.UUID  `json:"id"`
-	Type       string     `json:"type"`
-	ProjectID  uuid.UUID  `json:"project_id"`
-	InstanceID uuid.UUID  `json:"instance_id"`
-	Status     string     `json:"status"`
-	Error      *string    `json:"error,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID         uuid.UUID `json:"id"`
+	Type       string    `json:"type"`
+	ProjectID  uuid.UUID `json:"project_id"`
+	InstanceID uuid.UUID `json:"instance_id"`
+	Status     string    `json:"status"`
+	Error      *string   `json:"error,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }

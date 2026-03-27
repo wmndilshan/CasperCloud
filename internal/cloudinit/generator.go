@@ -7,11 +7,11 @@ import (
 )
 
 type Data struct {
-	Hostname      string
-	Username      string
-	SSHPublicKey  string
-	Packages      []string
-	RunCommands   []string
+	Hostname     string
+	Username     string
+	SSHPublicKey string
+	Packages     []string
+	RunCommands  []string
 }
 
 const userDataTemplate = `#cloud-config
