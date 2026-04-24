@@ -23,17 +23,17 @@ const (
 )
 
 type InstanceService struct {
-	repo        *repository.Repository
-	queueClient *queue.Client
+	repo        InstanceStore
+	publisher   queue.TaskPublisher
 	libvirt     libvirt.Adapter
 	defaultRAM  int
 	defaultVCPU int
 }
 
-func NewInstanceService(repo *repository.Repository, queueClient *queue.Client, libvirtAdapter libvirt.Adapter, defaultRAM, defaultVCPU int) *InstanceService {
+func NewInstanceService(repo InstanceStore, publisher queue.TaskPublisher, libvirtAdapter libvirt.Adapter, defaultRAM, defaultVCPU int) *InstanceService {
 	return &InstanceService{
 		repo:        repo,
-		queueClient: queueClient,
+		publisher:   publisher,
 		libvirt:     libvirtAdapter,
 		defaultRAM:  defaultRAM,
 		defaultVCPU: defaultVCPU,
@@ -77,7 +77,7 @@ func (s *InstanceService) CreateAsync(ctx context.Context, projectID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
-	err = s.queueClient.PublishTask(ctx, queue.TaskMessage{
+	err = s.publisher.PublishTask(ctx, queue.TaskMessage{
 		TaskID:     task.ID.String(),
 		Type:       task.Type,
 		ProjectID:  projectID.String(),

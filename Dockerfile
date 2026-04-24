@@ -1,6 +1,9 @@
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
-	libvirt-dev pkg-config gcc \
+	libvirt-dev \
+	libxml2-dev \
+	pkg-config \
+	gcc \
 	&& rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY go.mod go.sum ./

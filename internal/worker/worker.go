@@ -3,11 +3,13 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"caspercloud/internal/queue"
 	"caspercloud/internal/service"
 	"github.com/google/uuid"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Worker struct {
@@ -19,30 +21,104 @@ func New(queueClient *queue.Client, instanceSvc *service.InstanceService) *Worke
 	return &Worker{queueClient: queueClient, instanceSvc: instanceSvc}
 }
 
+// Run consumes messages until ctx is cancelled, then stops the consumer and finishes any in-flight delivery.
 func (w *Worker) Run(ctx context.Context) error {
-	msgs, err := w.queueClient.Consume()
+	if err := w.queueClient.SetPrefetch(1); err != nil {
+		return fmt.Errorf("qos: %w", err)
+	}
+	deliveries, consumerTag, err := w.queueClient.Consume()
 	if err != nil {
 		return err
 	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			if err := w.queueClient.CancelConsume(consumerTag); err != nil {
+				log.Printf("caspercloud worker: cancel consume: %v", err)
+			}
+			select {
+			case d := <-deliveries:
+				w.processDelivery(ctx, d)
+			default:
+			}
+			log.Println("caspercloud worker: shutdown after draining in-flight delivery")
 			return ctx.Err()
-		case msg, ok := <-msgs:
+
+		case d, ok := <-deliveries:
 			if !ok {
 				return nil
 			}
-			if err := w.handleMessage(ctx, msg.Body); err != nil {
-				log.Printf("caspercloud worker: message processing failed (nack, no requeue): %v", err)
-				_ = msg.Nack(false, false)
-				continue
-			}
-			_ = msg.Ack(false)
+			w.processDelivery(ctx, d)
 		}
 	}
 }
 
-func (w *Worker) handleMessage(ctx context.Context, body []byte) error {
+func (w *Worker) processDelivery(parent context.Context, d amqp.Delivery) {
+	workCtx := context.WithoutCancel(parent)
+	err := w.safeHandleMessage(workCtx, d.Body)
+	w.finalizeDelivery(d, err)
+}
+
+func (w *Worker) safeHandleMessage(ctx context.Context, body []byte) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return w.handleMessageBody(ctx, body)
+}
+
+func (w *Worker) finalizeDelivery(d amqp.Delivery, err error) {
+	if err == nil {
+		if ackErr := d.Ack(false); ackErr != nil {
+			log.Printf("caspercloud worker: ack failed: %v", ackErr)
+		}
+		return
+	}
+
+	log.Printf("caspercloud worker: task failed: %v", err)
+
+	prev := queue.RetryCountFromHeaders(d.Headers)
+	if prev >= queue.MaxConsecutiveFailures-1 {
+		hdr := amqp.Table{}
+		if d.Headers != nil {
+			for k, v := range d.Headers {
+				hdr[k] = v
+			}
+		}
+		hdr["x-caspercloud-dlq-reason"] = err.Error()
+		if pubErr := w.queueClient.PublishToDLQ(context.Background(), d.Body, hdr); pubErr != nil {
+			log.Printf("caspercloud worker: dlq publish failed: %v", pubErr)
+			_ = d.Nack(false, true)
+			return
+		}
+		if ackErr := d.Ack(false); ackErr != nil {
+			log.Printf("caspercloud worker: ack after dlq failed: %v", ackErr)
+		}
+		return
+	}
+
+	var payload queue.TaskMessage
+	if uerr := json.Unmarshal(d.Body, &payload); uerr != nil {
+		log.Printf("caspercloud worker: republish skipped, invalid json: %v", uerr)
+		_ = d.Nack(false, false)
+		return
+	}
+
+	next := int32(prev + 1)
+	headers := amqp.Table{queue.RetryHeaderKey: next}
+	if pubErr := w.queueClient.PublishTaskWithHeaders(context.Background(), payload, headers); pubErr != nil {
+		log.Printf("caspercloud worker: republish failed: %v", pubErr)
+		_ = d.Nack(false, true)
+		return
+	}
+	if ackErr := d.Ack(false); ackErr != nil {
+		log.Printf("caspercloud worker: ack after republish failed: %v", ackErr)
+	}
+}
+
+func (w *Worker) handleMessageBody(ctx context.Context, body []byte) error {
 	var payload queue.TaskMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
 		log.Printf("caspercloud worker: invalid json payload len=%d err=%v", len(body), err)

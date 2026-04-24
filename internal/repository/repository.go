@@ -343,3 +343,30 @@ func (r *Repository) GetTask(ctx context.Context, taskID uuid.UUID) (*Task, erro
 	}
 	return &t, nil
 }
+
+const staleRunningTaskMessage = "reconciled: task stuck in running for more than 30 minutes"
+
+// ReconcileStaleRunningTasks marks tasks that have been running too long as failed and sets
+// their instances to error. One round-trip: a CTE updates tasks, then instances in the same statement.
+func (r *Repository) ReconcileStaleRunningTasks(ctx context.Context) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+WITH timed_out AS (
+	UPDATE tasks
+	SET status = 'failed',
+	    error = $1,
+	    updated_at = now()
+	WHERE status = 'running'
+	  AND updated_at < now() - interval '30 minutes'
+	RETURNING project_id, instance_id
+)
+UPDATE instances AS i
+SET state = 'error',
+    updated_at = now()
+FROM timed_out t
+WHERE i.project_id = t.project_id
+  AND i.id = t.instance_id`, staleRunningTaskMessage)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

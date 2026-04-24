@@ -44,6 +44,8 @@ func main() {
 	instanceSvc := service.NewInstanceService(repo, queueClient, libvirtAdapter, cfg.VMDefaultRAM, cfg.VMDefaultVCPU)
 	w := worker.New(queueClient, instanceSvc)
 
+	startStaleTaskSweeper(ctx, repo)
+
 	log.Println("worker started")
 	if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("worker failed: %v", err)
