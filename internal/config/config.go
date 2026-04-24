@@ -6,26 +6,36 @@ import (
 )
 
 type Config struct {
-	HTTPAddr      string
-	DatabaseURL   string
-	RabbitMQURL   string
-	JWTSecret     string
-	LibvirtURI    string
-	StorageDir    string
-	VMDefaultRAM  int
-	VMDefaultVCPU int
+	HTTPAddr         string
+	DatabaseURL      string
+	RabbitMQURL      string
+	JWTSecret        string
+	LibvirtURI       string
+	StorageDir       string
+	VMInstancesDir   string
+	LibvirtNetwork   string
+	QEMUImgPath      string
+	CloudLocalDSPath string
+	GenisoimagePath  string
+	VMDefaultRAM     int
+	VMDefaultVCPU    int
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		HTTPAddr:      getEnv("HTTP_ADDR", ":8080"),
-		DatabaseURL:   os.Getenv("DATABASE_URL"),
-		RabbitMQURL:   os.Getenv("RABBITMQ_URL"),
-		JWTSecret:     os.Getenv("JWT_SECRET"),
-		LibvirtURI:    getEnv("LIBVIRT_URI", "qemu:///system"),
-		StorageDir:    getEnv("VM_STORAGE_DIR", "/var/lib/libvirt/images"),
-		VMDefaultRAM:  getEnvAsInt("VM_DEFAULT_RAM_MB", 2048),
-		VMDefaultVCPU: getEnvAsInt("VM_DEFAULT_VCPU", 2),
+		HTTPAddr:         getEnv("HTTP_ADDR", ":8080"),
+		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		RabbitMQURL:      os.Getenv("RABBITMQ_URL"),
+		JWTSecret:        os.Getenv("JWT_SECRET"),
+		LibvirtURI:       getEnv("LIBVIRT_URI", "qemu:///system"),
+		StorageDir:       getEnv("VM_STORAGE_DIR", "/var/lib/libvirt/images"),
+		VMInstancesDir:   getEnv("VM_INSTANCES_DIR", "/var/lib/caspercloud/instances"),
+		LibvirtNetwork:   getEnv("LIBVIRT_NETWORK", "default"),
+		QEMUImgPath:      getEnv("QEMU_IMG_PATH", "qemu-img"),
+		CloudLocalDSPath: os.Getenv("CLOUD_LOCALDS_PATH"),
+		GenisoimagePath:  os.Getenv("GENISOIMAGE_PATH"),
+		VMDefaultRAM:     getEnvAsInt("VM_DEFAULT_RAM_MB", 2048),
+		VMDefaultVCPU:    getEnvAsInt("VM_DEFAULT_VCPU", 2),
 	}
 
 	if cfg.DatabaseURL == "" {

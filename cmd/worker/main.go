@@ -40,7 +40,7 @@ func main() {
 
 	repo := repository.New(pool)
 	_ = auth.NewJWTManager(cfg.JWTSecret)
-	libvirtAdapter := libvirt.NewVirshAdapter(cfg.LibvirtURI)
+	libvirtAdapter := libvirt.NewLibvirtAdapter(cfg)
 	instanceSvc := service.NewInstanceService(repo, queueClient, libvirtAdapter, cfg.VMDefaultRAM, cfg.VMDefaultVCPU)
 	w := worker.New(queueClient, instanceSvc)
 

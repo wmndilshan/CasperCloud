@@ -1,14 +1,20 @@
 package libvirt
 
-import "context"
+import (
+	"context"
 
+	"github.com/google/uuid"
+)
+
+// VMConfig carries everything required to define and boot a new guest.
 type VMConfig struct {
-	InstanceName string
-	ImageRef     string
-	DiskPath     string
-	MemoryMB     int
-	VCPUs        int
-	CloudInitISO string
+	InstanceID    uuid.UUID
+	InstanceName  string
+	Hostname      string // used for NoCloud meta-data when non-empty
+	BaseImagePath string // absolute path to backing qcow2
+	UserData      string // full #cloud-config payload for user-data
+	MemoryMB      int
+	VCPUs         int
 }
 
 type Adapter interface {
@@ -16,5 +22,5 @@ type Adapter interface {
 	StartVM(ctx context.Context, instanceName string) error
 	StopVM(ctx context.Context, instanceName string) error
 	RebootVM(ctx context.Context, instanceName string) error
-	DeleteVM(ctx context.Context, instanceName string) error
+	DeleteVM(ctx context.Context, instanceName string, instanceID uuid.UUID) error
 }

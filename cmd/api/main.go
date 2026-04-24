@@ -40,7 +40,7 @@ func main() {
 
 	repo := repository.New(pool)
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret)
-	libvirtAdapter := libvirt.NewVirshAdapter(cfg.LibvirtURI)
+	libvirtAdapter := libvirt.NewLibvirtAdapter(cfg)
 
 	authSvc := service.NewAuthService(repo, jwtManager)
 	projectSvc := service.NewProjectService(repo)

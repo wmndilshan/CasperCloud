@@ -1,13 +1,25 @@
-FROM golang:1.23 AS builder
+FROM golang:1.23-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	libvirt-dev pkg-config gcc \
+	&& rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY go.mod .
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/api
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/worker ./cmd/worker
+ENV CGO_ENABLED=1
+RUN go mod tidy \
+	&& go build -o /out/api ./cmd/api \
+	&& go build -o /out/worker ./cmd/worker
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libvirt-clients cloud-image-utils && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	ca-certificates \
+	libvirt0 \
+	qemu-utils \
+	cloud-image-utils \
+	genisoimage \
+	xorriso \
+	&& rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /out/api /usr/local/bin/api
 COPY --from=builder /out/worker /usr/local/bin/worker

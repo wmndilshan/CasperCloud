@@ -1,5 +1,6 @@
-version: '3.9'
-
+# For VM lifecycle (worker + API instance actions), run on a host with libvirt and either:
+# - run api/worker on the host (not in Docker), or
+# - add volumes for /var/run/libvirt/libvirt-sock and host paths to base images.
 services:
   db:
     image: postgres:16
@@ -31,9 +32,11 @@ services:
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
       JWT_SECRET: "dev-secret"
       LIBVIRT_URI: "qemu:///system"
+      LIBVIRT_NETWORK: "default"
       VM_DEFAULT_RAM_MB: "2048"
       VM_DEFAULT_VCPU: "2"
       VM_STORAGE_DIR: "/var/lib/libvirt/images"
+      VM_INSTANCES_DIR: "/var/lib/caspercloud/instances"
     ports:
       - "8080:8080"
 
@@ -48,9 +51,14 @@ services:
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
       JWT_SECRET: "dev-secret"
       LIBVIRT_URI: "qemu:///system"
+      LIBVIRT_NETWORK: "default"
       VM_DEFAULT_RAM_MB: "2048"
       VM_DEFAULT_VCPU: "2"
       VM_STORAGE_DIR: "/var/lib/libvirt/images"
+      VM_INSTANCES_DIR: "/var/lib/caspercloud/instances"
+    volumes:
+      - caspercloud_instances:/var/lib/caspercloud/instances
 
 volumes:
   pgdata:
+  caspercloud_instances:

@@ -18,11 +18,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install libvirt (CGO)
+        run: sudo apt-get update && sudo apt-get install -y libvirt-dev
+
       - name: Download dependencies
         run: go mod download
+        env:
+          CGO_ENABLED: "1"
 
       - name: Sync module metadata
         run: go mod tidy
+        env:
+          CGO_ENABLED: "1"
 
       - name: Check formatting
         run: |
@@ -35,9 +42,15 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+        env:
+          CGO_ENABLED: "1"
 
       - name: Test
         run: go test ./...
+        env:
+          CGO_ENABLED: "1"
 
       - name: Build
         run: go build ./...
+        env:
+          CGO_ENABLED: "1"
