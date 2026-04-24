@@ -1,3 +1,14 @@
+// @title           CasperCloud API
+// @version         1.0
+// @description     HTTP API for CasperCloud (multi-tenant projects, images, instances). Authenticated routes expect `Authorization: Bearer <JWT>`. Project-scoped routes require a token whose `active_project_id` matches the path `projectID` (use login with `project_id` or POST /v1/auth/switch-project).
+// @host            localhost:8080
+// @BasePath        /
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description       JWT from POST /v1/auth/login or /v1/auth/register. Prefix value with "Bearer " (e.g. `Bearer eyJhbG...`).
+
 package main
 
 import (
@@ -8,6 +19,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	_ "caspercloud/api" // swag generated docs
 
 	"caspercloud/internal/auth"
 	"caspercloud/internal/config"

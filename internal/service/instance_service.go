@@ -85,7 +85,7 @@ func (s *InstanceService) CreateAsync(ctx context.Context, projectID uuid.UUID, 
 	})
 	if err != nil {
 		msg := err.Error()
-		_ = s.repo.UpdateTaskStatus(ctx, task.ID, "failed", &msg)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, task.ID, "failed", &msg)
 		_ = s.repo.UpdateInstanceState(ctx, projectID, instance.ID, InstanceStateError)
 		return nil, err
 	}
@@ -150,30 +150,23 @@ func (s *InstanceService) Delete(ctx context.Context, projectID, instanceID uuid
 
 func (s *InstanceService) HandleCreateTask(ctx context.Context, taskID, projectID, instanceID uuid.UUID) error {
 	log.Printf("caspercloud worker: instance.create task start task_id=%s project_id=%s instance_id=%s", taskID, projectID, instanceID)
-	if err := s.repo.UpdateTaskStatus(ctx, taskID, "running", nil); err != nil {
+	if err := s.repo.UpdateTaskStatus(ctx, projectID, taskID, "running", nil); err != nil {
 		log.Printf("caspercloud worker: update task running failed task_id=%s err=%v", taskID, err)
 		return err
 	}
-	inst, err := s.repo.GetInstanceByID(ctx, instanceID)
+	inst, err := s.repo.GetInstance(ctx, projectID, instanceID)
 	if err != nil {
 		msg := err.Error()
 		log.Printf("caspercloud worker: get instance failed task_id=%s instance_id=%s err=%v", taskID, instanceID, err)
-		_ = s.repo.UpdateTaskStatus(ctx, taskID, "failed", &msg)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
 		return err
-	}
-	if inst.ProjectID != projectID {
-		msg := "task project_id does not match instance project"
-		log.Printf("caspercloud worker: project mismatch task_id=%s task_project=%s instance_project=%s", taskID, projectID, inst.ProjectID)
-		_ = s.repo.UpdateInstanceState(ctx, inst.ProjectID, instanceID, InstanceStateError)
-		_ = s.repo.UpdateTaskStatus(ctx, taskID, "failed", &msg)
-		return fmt.Errorf("%s", msg)
 	}
 	img, err := s.repo.GetImage(ctx, projectID, inst.ImageID)
 	if err != nil {
 		msg := err.Error()
 		log.Printf("caspercloud worker: get image failed task_id=%s image_id=%s err=%v", taskID, inst.ImageID, err)
 		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, InstanceStateError)
-		_ = s.repo.UpdateTaskStatus(ctx, taskID, "failed", &msg)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
 		return err
 	}
 	basePath, err := libvirt.ImagePathFromSource(img.SourceURL)
@@ -181,7 +174,7 @@ func (s *InstanceService) HandleCreateTask(ctx context.Context, taskID, projectI
 		msg := err.Error()
 		log.Printf("caspercloud worker: resolve base image failed task_id=%s source=%q err=%v", taskID, img.SourceURL, err)
 		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, InstanceStateError)
-		_ = s.repo.UpdateTaskStatus(ctx, taskID, "failed", &msg)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
 		return err
 	}
 	hostname := hostnameFromUserData(inst.CloudInitData)
@@ -199,16 +192,16 @@ func (s *InstanceService) HandleCreateTask(ctx context.Context, taskID, projectI
 		msg := err.Error()
 		log.Printf("caspercloud worker: libvirt CreateVM failed task_id=%s instance_id=%s err=%v", taskID, instanceID, err)
 		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, InstanceStateError)
-		_ = s.repo.UpdateTaskStatus(ctx, taskID, "failed", &msg)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
 		return err
 	}
 	if err := s.repo.UpdateInstanceState(ctx, projectID, instanceID, InstanceStateRunning); err != nil {
 		msg := err.Error()
 		log.Printf("caspercloud worker: update instance running failed task_id=%s err=%v", taskID, err)
-		_ = s.repo.UpdateTaskStatus(ctx, taskID, "failed", &msg)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
 		return err
 	}
-	if err := s.repo.UpdateTaskStatus(ctx, taskID, "succeeded", nil); err != nil {
+	if err := s.repo.UpdateTaskStatus(ctx, projectID, taskID, "succeeded", nil); err != nil {
 		log.Printf("caspercloud worker: mark task succeeded failed task_id=%s err=%v", taskID, err)
 		return err
 	}

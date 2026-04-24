@@ -8,6 +8,7 @@ import (
 	"caspercloud/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 type Server struct {
@@ -41,6 +42,13 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
+	r.Get("/healthz", s.handleHealthz)
+
+	r.Get("/docs", func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, "/docs/", http.StatusFound)
+	})
+	r.Get("/docs/*", httpSwagger.WrapHandler)
+
 	r.Route("/v1", func(r chi.Router) {
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register", s.handleRegister)
@@ -49,10 +57,12 @@ func (s *Server) Router() http.Handler {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
+			r.Post("/auth/switch-project", s.handleSwitchProject)
 			r.Post("/projects", s.handleCreateProject)
 			r.Get("/projects", s.handleListProjects)
 
 			r.Route("/projects/{projectID}", func(r chi.Router) {
+				r.Use(s.projectTokenMatchesURL)
 				r.Route("/images", func(r chi.Router) {
 					r.Post("/", s.handleCreateImage)
 					r.Get("/", s.handleListImages)
@@ -73,11 +83,18 @@ func (s *Server) Router() http.Handler {
 		})
 	})
 
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-
 	return r
+}
+
+// handleHealthz reports API readiness.
+// @Summary      Health check
+// @Description  Liveness endpoint; no authentication required.
+// @Tags         system
+// @Produce      json
+// @Success      200  {object}  docHealthData
+// @Router       /healthz [get]
+func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	writeData(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func mapRepoError(err error) (int, string) {

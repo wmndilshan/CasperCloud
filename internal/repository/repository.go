@@ -236,21 +236,6 @@ func (r *Repository) GetInstance(ctx context.Context, projectID, instanceID uuid
 	return &inst, nil
 }
 
-func (r *Repository) GetInstanceByID(ctx context.Context, instanceID uuid.UUID) (*Instance, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT id, project_id, image_id, name, state, cloud_init_data, created_at, updated_at
-		FROM instances
-		WHERE id = $1`, instanceID)
-	var inst Instance
-	if err := row.Scan(&inst.ID, &inst.ProjectID, &inst.ImageID, &inst.Name, &inst.State, &inst.CloudInitData, &inst.CreatedAt, &inst.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return &inst, nil
-}
-
 func (r *Repository) ListInstances(ctx context.Context, projectID uuid.UUID) ([]Instance, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, project_id, image_id, name, state, cloud_init_data, created_at, updated_at
@@ -313,13 +298,13 @@ func (r *Repository) CreateTask(ctx context.Context, taskType string, projectID,
 	return &t, nil
 }
 
-func (r *Repository) UpdateTaskStatus(ctx context.Context, taskID uuid.UUID, status string, errMessage *string) error {
+func (r *Repository) UpdateTaskStatus(ctx context.Context, projectID, taskID uuid.UUID, status string, errMessage *string) error {
 	cmd, err := r.pool.Exec(ctx, `
 		UPDATE tasks
-		SET status = $2,
-		    error = $3,
+		SET status = $3,
+		    error = $4,
 		    updated_at = now()
-		WHERE id = $1`, taskID, status, errMessage)
+		WHERE id = $2 AND project_id = $1`, projectID, taskID, status, errMessage)
 	if err != nil {
 		return err
 	}
@@ -329,11 +314,11 @@ func (r *Repository) UpdateTaskStatus(ctx context.Context, taskID uuid.UUID, sta
 	return nil
 }
 
-func (r *Repository) GetTask(ctx context.Context, taskID uuid.UUID) (*Task, error) {
+func (r *Repository) GetTask(ctx context.Context, projectID, taskID uuid.UUID) (*Task, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, type, project_id, instance_id, status, error, created_at, updated_at
 		FROM tasks
-		WHERE id = $1`, taskID)
+		WHERE id = $2 AND project_id = $1`, projectID, taskID)
 	var t Task
 	if err := row.Scan(&t.ID, &t.Type, &t.ProjectID, &t.InstanceID, &t.Status, &t.Error, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

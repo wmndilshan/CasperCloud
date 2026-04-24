@@ -94,7 +94,9 @@ func (f *fakeInstanceStore) CreateTask(ctx context.Context, taskType string, pro
 	}, nil
 }
 
-func (f *fakeInstanceStore) UpdateTaskStatus(ctx context.Context, taskID uuid.UUID, status string, errMessage *string) error {
+func (f *fakeInstanceStore) UpdateTaskStatus(ctx context.Context, projectID, taskID uuid.UUID, status string, errMessage *string) error {
+	_ = projectID
+	_ = taskID
 	f.lastTaskStatus = status
 	return nil
 }
@@ -106,13 +108,6 @@ func (f *fakeInstanceStore) UpdateInstanceState(ctx context.Context, projectID, 
 
 func (f *fakeInstanceStore) GetInstance(ctx context.Context, projectID, instanceID uuid.UUID) (*repository.Instance, error) {
 	if f.instance != nil {
-		return f.instance, nil
-	}
-	return nil, repository.ErrNotFound
-}
-
-func (f *fakeInstanceStore) GetInstanceByID(ctx context.Context, instanceID uuid.UUID) (*repository.Instance, error) {
-	if f.instance != nil && f.instance.ID == instanceID {
 		return f.instance, nil
 	}
 	return nil, repository.ErrNotFound

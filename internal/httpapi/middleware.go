@@ -11,8 +11,12 @@ import (
 
 type contextKey string
 
-const userIDContextKey contextKey = "user_id"
+const (
+	userIDContextKey          contextKey = "user_id"
+	activeProjectIDContextKey contextKey = "active_project_id"
+)
 
+// authMiddleware validates Bearer JWT, extracts user_id and active_project_id (if present), and stores them on the context.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
@@ -36,7 +40,36 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), userIDContextKey, userID)
+		if strings.TrimSpace(claims.ActiveProjectID) != "" {
+			pid, err := uuid.Parse(claims.ActiveProjectID)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "invalid active_project_id in token")
+				return
+			}
+			ctx = context.WithValue(ctx, activeProjectIDContextKey, pid)
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// projectTokenMatchesURL ensures the JWT active project matches :projectID in the route (prevents IDOR across tenants).
+func (s *Server) projectTokenMatchesURL(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		urlPID, err := uuid.Parse(chiURLParam(r, "projectID"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid project id")
+			return
+		}
+		claimPID, ok := activeProjectIDFromContext(r.Context())
+		if !ok || claimPID == uuid.Nil {
+			writeError(w, http.StatusForbidden, "token is not scoped to a project; use POST /v1/auth/switch-project or login with project_id")
+			return
+		}
+		if claimPID != urlPID {
+			writeError(w, http.StatusForbidden, "token project scope does not match this path")
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -49,6 +82,11 @@ func userIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return userID, ok
 }
 
-func (s *Server) jwtManager() *auth.JWTManager {
-	return s.jwt
+func activeProjectIDFromContext(ctx context.Context) (uuid.UUID, bool) {
+	val := ctx.Value(activeProjectIDContextKey)
+	if val == nil {
+		return uuid.Nil, false
+	}
+	pid, ok := val.(uuid.UUID)
+	return pid, ok
 }

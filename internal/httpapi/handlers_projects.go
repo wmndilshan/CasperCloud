@@ -1,17 +1,31 @@
 package httpapi
 
 import (
-	"encoding/json"
+	"errors"
 	"net/http"
 
+	"caspercloud/internal/repository"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
 type createProjectRequest struct {
-	Name string `json:"name"`
+	Name string `json:"name" validate:"required,min=1,max=128"`
 }
 
+// handleCreateProject creates a project for the authenticated user.
+// @Summary      Create project
+// @Description  Creates a new project and adds the caller as owner.
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        body  body      createProjectRequest  true  "Project name"
+// @Success      201   {object}  docProjectData
+// @Failure      400   {object}  map[string]interface{}
+// @Failure      401   {object}  map[string]interface{}
+// @Failure      500   {object}  map[string]interface{}
+// @Router       /v1/projects [post]
+// @Security     BearerAuth
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	userID, ok := userIDFromContext(r.Context())
 	if !ok {
@@ -19,12 +33,8 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createProjectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid payload")
-		return
-	}
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+	if err := decodeAndValidate(r, &req); err != nil {
+		respondInvalidRequest(w, err)
 		return
 	}
 	project, err := s.projectSvc.CreateProject(r.Context(), userID, req.Name)
@@ -32,9 +42,18 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not create project")
 		return
 	}
-	writeJSON(w, http.StatusCreated, project)
+	writeData(w, http.StatusCreated, project)
 }
 
+// handleListProjects lists projects the user belongs to.
+// @Summary      List projects
+// @Tags         projects
+// @Produce      json
+// @Success      200  {object}  docProjectsData
+// @Failure      401  {object}  map[string]interface{}
+// @Failure      500  {object}  map[string]interface{}
+// @Router       /v1/projects [get]
+// @Security     BearerAuth
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	userID, ok := userIDFromContext(r.Context())
 	if !ok {
@@ -46,19 +65,27 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not list projects")
 		return
 	}
-	writeJSON(w, http.StatusOK, projects)
+	writeData(w, http.StatusOK, projects)
 }
 
-func (s *Server) requireProjectAccess(r *http.Request) (uuid.UUID, bool) {
+// requireProjectAccess checks membership after route-level JWT project scope. Returns false if the handler should stop (response already written).
+func (s *Server) requireProjectAccess(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	userID, ok := userIDFromContext(r.Context())
 	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return uuid.Nil, false
 	}
 	projectID, err := uuid.Parse(chi.URLParam(r, "projectID"))
 	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid project id")
 		return uuid.Nil, false
 	}
 	if err := s.projectSvc.EnsureProjectAccess(r.Context(), userID, projectID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			writeError(w, http.StatusForbidden, "project not accessible")
+			return uuid.Nil, false
+		}
+		writeError(w, http.StatusInternalServerError, "could not verify project access")
 		return uuid.Nil, false
 	}
 	return projectID, true

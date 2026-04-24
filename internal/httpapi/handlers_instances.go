@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"caspercloud/internal/service"
@@ -11,31 +10,41 @@ import (
 )
 
 type createInstanceRequest struct {
-	Name         string   `json:"name"`
-	ImageID      string   `json:"image_id"`
-	Hostname     string   `json:"hostname"`
-	Username     string   `json:"username"`
-	SSHPublicKey string   `json:"ssh_public_key"`
-	Packages     []string `json:"packages"`
-	RunCommands  []string `json:"run_commands"`
+	Name         string   `json:"name" validate:"required,min=1,max=128"`
+	ImageID      string   `json:"image_id" validate:"required,uuid"`
+	Hostname     string   `json:"hostname" validate:"required,min=1,max=253"`
+	Username     string   `json:"username" validate:"required,min=1,max=32"`
+	SSHPublicKey string   `json:"ssh_public_key" validate:"required,min=1,max=8192"`
+	Packages     []string `json:"packages" validate:"max=64,dive,max=128"`
+	RunCommands  []string `json:"run_commands" validate:"max=32,dive,max=2048"`
 }
 
+// handleCreateInstance enqueues instance creation.
+// @Summary      Create instance
+// @Tags         instances
+// @Accept       json
+// @Produce      json
+// @Param        projectID  path      string                 true  "Project UUID"
+// @Param        body       body      createInstanceRequest  true  "Instance spec"
+// @Success      202        {object}  docCreateInstanceAccepted
+// @Failure      400        {object}  map[string]interface{}
+// @Failure      401        {object}  map[string]interface{}
+// @Failure      403        {object}  map[string]interface{}
+// @Failure      404        {object}  map[string]interface{}
+// @Failure      500        {object}  map[string]interface{}
+// @Router       /v1/projects/{projectID}/instances [post]
+// @Security     BearerAuth
 func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
-	projectID, ok := s.requireProjectAccess(r)
+	projectID, ok := s.requireProjectAccess(w, r)
 	if !ok {
-		writeError(w, http.StatusForbidden, "project not accessible")
 		return
 	}
 	var req createInstanceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid payload")
+	if err := decodeAndValidate(r, &req); err != nil {
+		respondInvalidRequest(w, err)
 		return
 	}
-	imageID, err := uuid.Parse(req.ImageID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid image id")
-		return
-	}
+	imageID := uuid.MustParse(req.ImageID)
 	res, err := s.instanceSvc.CreateAsync(r.Context(), projectID, service.CreateInstanceInput{
 		Name:         req.Name,
 		ImageID:      imageID,
@@ -53,13 +62,25 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, msg)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, res)
+	writeData(w, http.StatusAccepted, res)
 }
 
+// handleGetInstance returns instance details.
+// @Summary      Get instance
+// @Tags         instances
+// @Produce      json
+// @Param        projectID   path  string  true  "Project UUID"
+// @Param        instanceID  path  string  true  "Instance UUID"
+// @Success      200         {object}  docInstanceData
+// @Failure      400         {object}  map[string]interface{}
+// @Failure      401         {object}  map[string]interface{}
+// @Failure      403         {object}  map[string]interface{}
+// @Failure      404         {object}  map[string]interface{}
+// @Router       /v1/projects/{projectID}/instances/{instanceID} [get]
+// @Security     BearerAuth
 func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
-	projectID, ok := s.requireProjectAccess(r)
+	projectID, ok := s.requireProjectAccess(w, r)
 	if !ok {
-		writeError(w, http.StatusForbidden, "project not accessible")
 		return
 	}
 	instanceID, err := uuid.Parse(chi.URLParam(r, "instanceID"))
@@ -73,13 +94,23 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, inst)
+	writeData(w, http.StatusOK, inst)
 }
 
+// handleListInstances lists instances in the project.
+// @Summary      List instances
+// @Tags         instances
+// @Produce      json
+// @Param        projectID  path  string  true  "Project UUID"
+// @Success      200        {object}  docInstancesData
+// @Failure      401        {object}  map[string]interface{}
+// @Failure      403        {object}  map[string]interface{}
+// @Failure      500        {object}  map[string]interface{}
+// @Router       /v1/projects/{projectID}/instances [get]
+// @Security     BearerAuth
 func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
-	projectID, ok := s.requireProjectAccess(r)
+	projectID, ok := s.requireProjectAccess(w, r)
 	if !ok {
-		writeError(w, http.StatusForbidden, "project not accessible")
 		return
 	}
 	instances, err := s.instanceSvc.List(r.Context(), projectID)
@@ -87,7 +118,7 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not list instances")
 		return
 	}
-	writeJSON(w, http.StatusOK, instances)
+	writeData(w, http.StatusOK, instances)
 }
 
 func (s *Server) handleStartInstance(w http.ResponseWriter, r *http.Request) {
@@ -102,10 +133,22 @@ func (s *Server) handleRebootInstance(w http.ResponseWriter, r *http.Request) {
 	s.handleInstanceAction(w, r, s.instanceSvc.Reboot)
 }
 
+// handleDeleteInstance deletes an instance.
+// @Summary      Delete instance
+// @Tags         instances
+// @Param        projectID   path  string  true  "Project UUID"
+// @Param        instanceID  path  string  true  "Instance UUID"
+// @Success      204         "No Content"
+// @Failure      400         {object}  map[string]interface{}
+// @Failure      401         {object}  map[string]interface{}
+// @Failure      403         {object}  map[string]interface{}
+// @Failure      404         {object}  map[string]interface{}
+// @Failure      500         {object}  map[string]interface{}
+// @Router       /v1/projects/{projectID}/instances/{instanceID} [delete]
+// @Security     BearerAuth
 func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
-	projectID, ok := s.requireProjectAccess(r)
+	projectID, ok := s.requireProjectAccess(w, r)
 	if !ok {
-		writeError(w, http.StatusForbidden, "project not accessible")
 		return
 	}
 	instanceID, err := uuid.Parse(chi.URLParam(r, "instanceID"))
@@ -124,10 +167,25 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleInstanceAction runs start/stop/reboot.
+// @Summary      Instance lifecycle action
+// @Tags         instances
+// @Produce      json
+// @Param        projectID   path  string  true  "Project UUID"
+// @Param        instanceID  path  string  true  "Instance UUID"
+// @Success      200         {object}  docStatusOK
+// @Failure      400         {object}  map[string]interface{}
+// @Failure      401         {object}  map[string]interface{}
+// @Failure      403         {object}  map[string]interface{}
+// @Failure      404         {object}  map[string]interface{}
+// @Failure      500         {object}  map[string]interface{}
+// @Router       /v1/projects/{projectID}/instances/{instanceID}/start [post]
+// @Router       /v1/projects/{projectID}/instances/{instanceID}/stop [post]
+// @Router       /v1/projects/{projectID}/instances/{instanceID}/reboot [post]
+// @Security     BearerAuth
 func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request, fn func(context.Context, uuid.UUID, uuid.UUID) error) {
-	projectID, ok := s.requireProjectAccess(r)
+	projectID, ok := s.requireProjectAccess(w, r)
 	if !ok {
-		writeError(w, http.StatusForbidden, "project not accessible")
 		return
 	}
 	instanceID, err := uuid.Parse(chi.URLParam(r, "instanceID"))
@@ -143,5 +201,5 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request, fn
 		writeError(w, status, msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeData(w, http.StatusOK, map[string]string{"status": "ok"})
 }

@@ -8,9 +8,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// Claims carries identity and tenant scope. ActiveProjectID is empty when the token is not scoped to a project.
 type Claims struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
+	UserID          string `json:"user_id"`
+	Email           string `json:"email"`
+	ActiveProjectID string `json:"active_project_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -22,7 +24,8 @@ func NewJWTManager(secret string) *JWTManager {
 	return &JWTManager{secret: []byte(secret)}
 }
 
-func (m *JWTManager) Generate(userID uuid.UUID, email string, ttl time.Duration) (string, error) {
+// Generate issues a JWT. When activeProject is non-nil, it is embedded as active_project_id for tenant-scoped routes.
+func (m *JWTManager) Generate(userID uuid.UUID, email string, activeProject *uuid.UUID, ttl time.Duration) (string, error) {
 	claims := Claims{
 		UserID: userID.String(),
 		Email:  email,
@@ -31,6 +34,9 @@ func (m *JWTManager) Generate(userID uuid.UUID, email string, ttl time.Duration)
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Subject:   userID.String(),
 		},
+	}
+	if activeProject != nil && *activeProject != uuid.Nil {
+		claims.ActiveProjectID = activeProject.String()
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(m.secret)
