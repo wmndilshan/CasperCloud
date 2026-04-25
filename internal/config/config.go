@@ -31,6 +31,8 @@ type Config struct {
 	WorkerMetricsAddr string
 	// MetricsPollSeconds is how often the worker polls libvirt for running instances (default 12).
 	MetricsPollSeconds int
+	// IptablesPath is the iptables binary used for floating IP NAT (worker); default "iptables".
+	IptablesPath string
 }
 
 func Load() (*Config, error) {
@@ -55,6 +57,7 @@ func Load() (*Config, error) {
 		RedisURL:         os.Getenv("REDIS_URL"),
 		WorkerMetricsAddr: getEnv("WORKER_METRICS_ADDR", ""),
 		MetricsPollSeconds: getEnvAsInt("METRICS_POLL_SECONDS", 12),
+		IptablesPath:       getEnv("IPTABLES_PATH", "iptables"),
 	}
 
 	if cfg.DatabaseURL == "" {

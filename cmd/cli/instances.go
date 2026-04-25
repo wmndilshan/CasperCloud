@@ -26,6 +26,7 @@ func instancesCmd() *cobra.Command {
 	cmd.AddCommand(instancesCreateCmd())
 	cmd.AddCommand(instancesListCmd())
 	cmd.AddCommand(instancesSSHCmd())
+	cmd.AddCommand(instancesSnapshotCmd())
 	return cmd
 }
 

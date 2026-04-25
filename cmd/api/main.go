@@ -77,7 +77,9 @@ func main() {
 	}
 	instanceSvc := service.NewInstanceService(repo, queueClient, libvirtAdapter, cfg.VMDefaultRAM, cfg.VMDefaultVCPU, cfg.LibvirtBridge, instanceOpts...)
 
-	server := httpapi.NewServer(authSvc, projectSvc, imageSvc, instanceSvc, volSvc, jwtManager)
+	floatingIPSvc := service.NewFloatingIPService(repo, queueClient, nil)
+
+	server := httpapi.NewServer(authSvc, projectSvc, imageSvc, instanceSvc, volSvc, floatingIPSvc, jwtManager)
 	httpServer := &http.Server{
 		Addr:         cfg.HTTPAddr,
 		Handler:      server.Router(),

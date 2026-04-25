@@ -46,12 +46,24 @@ type Instance struct {
 }
 
 type Task struct {
-	ID         uuid.UUID `json:"id"`
-	Type       string    `json:"type"`
-	ProjectID  uuid.UUID `json:"project_id"`
-	InstanceID uuid.UUID `json:"instance_id"`
-	Status     string    `json:"status"`
-	Error      *string   `json:"error,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         uuid.UUID  `json:"id"`
+	Type       string     `json:"type"`
+	ProjectID  uuid.UUID  `json:"project_id"`
+	InstanceID *uuid.UUID `json:"instance_id,omitempty"`
+	Status     string     `json:"status"`
+	Error      *string    `json:"error,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+// FloatingIP is a public address row; unallocated rows have ProjectID nil.
+type FloatingIP struct {
+	ID          uuid.UUID  `json:"id"`
+	ProjectID   *uuid.UUID `json:"project_id,omitempty"`
+	PublicIP    string     `json:"public_ip"`
+	InstanceID  *uuid.UUID `json:"instance_id,omitempty"`
+	PrivateIP   *string    `json:"private_ip,omitempty"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }

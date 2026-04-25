@@ -40,4 +40,11 @@ type Adapter interface {
 	AttachVolume(ctx context.Context, instanceName, absPath, targetDev string, live bool) error
 	// DetachVolume removes a virtio disk by matching XML (live+config when live is true).
 	DetachVolume(ctx context.Context, instanceName, absPath, targetDev string, live bool) error
+
+	// CreateInternalSnapshot creates a full-system internal QCOW2 snapshot (snapLibvirtName is libvirt <name>).
+	CreateInternalSnapshot(ctx context.Context, instanceName, snapLibvirtName, description string, domainRunning bool) error
+	// RevertToInternalSnapshot restores the domain to an internal snapshot.
+	RevertToInternalSnapshot(ctx context.Context, instanceName, snapLibvirtName string, domainWasRunningAtSnapshot, domainCurrentlyRunning bool) error
+	// DeleteInternalSnapshot removes a snapshot by libvirt name.
+	DeleteInternalSnapshot(ctx context.Context, instanceName, snapLibvirtName string) error
 }

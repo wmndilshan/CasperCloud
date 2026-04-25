@@ -21,3 +21,8 @@ type CreateInstanceRequest struct {
 type InstanceVolumeAttachRequest struct {
 	VolumeID string `json:"volume_id" validate:"required,uuid"`
 }
+
+// CreateSnapshotRequest is the JSON body for POST .../instances/{id}/snapshots.
+type CreateSnapshotRequest struct {
+	Name string `json:"name" validate:"required,min=1,max=128"`
+}

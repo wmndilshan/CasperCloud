@@ -13,12 +13,13 @@ import (
 )
 
 type Server struct {
-	authSvc     *service.AuthService
-	projectSvc  *service.ProjectService
-	imageSvc    *service.ImageService
-	instanceSvc *service.InstanceService
-	volumeSvc   *service.VolumeService
-	jwt         *auth.JWTManager
+	authSvc        *service.AuthService
+	projectSvc     *service.ProjectService
+	imageSvc       *service.ImageService
+	instanceSvc    *service.InstanceService
+	volumeSvc      *service.VolumeService
+	floatingIPSvc  *service.FloatingIPService
+	jwt            *auth.JWTManager
 }
 
 func NewServer(
@@ -27,15 +28,17 @@ func NewServer(
 	imageSvc *service.ImageService,
 	instanceSvc *service.InstanceService,
 	volumeSvc *service.VolumeService,
+	floatingIPSvc *service.FloatingIPService,
 	jwt *auth.JWTManager,
 ) *Server {
 	return &Server{
-		authSvc:     authSvc,
-		projectSvc:  projectSvc,
-		imageSvc:    imageSvc,
-		instanceSvc: instanceSvc,
-		volumeSvc:   volumeSvc,
-		jwt:         jwt,
+		authSvc:       authSvc,
+		projectSvc:    projectSvc,
+		imageSvc:      imageSvc,
+		instanceSvc:   instanceSvc,
+		volumeSvc:     volumeSvc,
+		floatingIPSvc: floatingIPSvc,
+		jwt:           jwt,
 	}
 }
 
@@ -83,6 +86,12 @@ func (s *Server) Router() http.Handler {
 				r.Route("/networks", func(r chi.Router) {
 					r.Get("/", s.handleListNetworks)
 				})
+				r.Route("/floating-ips", func(r chi.Router) {
+					r.Post("/", s.handleAllocateFloatingIP)
+					r.Get("/", s.handleListFloatingIPs)
+					r.Post("/{floatingIPID}/associate", s.handleAssociateFloatingIP)
+					r.Post("/{floatingIPID}/disassociate", s.handleDisassociateFloatingIP)
+				})
 				r.Route("/instances", func(r chi.Router) {
 					r.Post("/", s.handleCreateInstance)
 					r.Get("/", s.handleListInstances)
@@ -92,6 +101,11 @@ func (s *Server) Router() http.Handler {
 					r.Post("/{instanceID}/attach", s.handleAttachVolume)
 					r.Post("/{instanceID}/detach", s.handleDetachVolume)
 					r.Delete("/{instanceID}", s.handleDeleteInstance)
+					r.Route("/{instanceID}/snapshots", func(r chi.Router) {
+						r.Post("/", s.handleCreateSnapshot)
+						r.Get("/", s.handleListSnapshots)
+						r.Post("/{snapshotID}/revert", s.handleRevertSnapshot)
+					})
 				})
 			})
 		})
@@ -131,6 +145,21 @@ func mapRepoError(err error) (int, string) {
 		return http.StatusConflict, err.Error()
 	}
 	if errors.Is(err, service.ErrInstanceNotRunning) || errors.Is(err, service.ErrVolumeNotAvailable) || errors.Is(err, service.ErrVolumeNotAttachedToInstance) {
+		return http.StatusBadRequest, err.Error()
+	}
+	if errors.Is(err, service.ErrInstanceBusySnapshotting) {
+		return http.StatusConflict, err.Error()
+	}
+	if errors.Is(err, service.ErrSnapshotNotReady) {
+		return http.StatusConflict, err.Error()
+	}
+	if errors.Is(err, repository.ErrSnapshotStateConflict) || errors.Is(err, repository.ErrSnapshotNameConflict) {
+		return http.StatusConflict, err.Error()
+	}
+	if errors.Is(err, repository.ErrNoFloatingIPsAvailable) {
+		return http.StatusConflict, "no floating ips available in pool"
+	}
+	if errors.Is(err, repository.ErrFloatingIPAssociatePreconditions) {
 		return http.StatusBadRequest, err.Error()
 	}
 	return http.StatusInternalServerError, "internal server error"

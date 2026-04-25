@@ -24,6 +24,15 @@ type InstanceStore interface {
 	BatchUpdateInstanceStates(ctx context.Context, updates []repository.InstanceStateUpdate) error
 	FinalizeInstanceDestroy(ctx context.Context, projectID, taskID, instanceID uuid.UUID) error
 	CountVolumesAttachedToInstance(ctx context.Context, projectID, instanceID uuid.UUID) (int64, error)
+
+	BeginSnapshotCreate(ctx context.Context, projectID, instanceID, snapshotID uuid.UUID, name string) (priorState string, err error)
+	BeginSnapshotRevert(ctx context.Context, projectID, instanceID uuid.UUID) (priorState string, err error)
+	UpdateSnapshotStatus(ctx context.Context, projectID, snapshotID uuid.UUID, status string) error
+	ListSnapshotsForInstance(ctx context.Context, projectID, instanceID uuid.UUID) ([]repository.Snapshot, error)
+	GetSnapshot(ctx context.Context, projectID, instanceID, snapshotID uuid.UUID) (*repository.Snapshot, error)
+
+	ListActiveFloatingIPNATBindingsByInstance(ctx context.Context, projectID, instanceID uuid.UUID) ([]repository.FloatingIPNATBinding, error)
+	ClearFloatingIPBindingsForInstance(ctx context.Context, projectID, instanceID uuid.UUID) error
 }
 
 var _ InstanceStore = (*repository.Repository)(nil)

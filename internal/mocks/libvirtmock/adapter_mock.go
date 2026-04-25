@@ -204,3 +204,45 @@ func (mr *MockAdapterMockRecorder) DetachVolume(ctx, instanceName, absPath, targ
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DetachVolume", reflect.TypeOf((*MockAdapter)(nil).DetachVolume), ctx, instanceName, absPath, targetDev, live)
 }
+
+// CreateInternalSnapshot mocks base method.
+func (m *MockAdapter) CreateInternalSnapshot(ctx context.Context, instanceName, snapLibvirtName, description string, domainRunning bool) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateInternalSnapshot", ctx, instanceName, snapLibvirtName, description, domainRunning)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateInternalSnapshot indicates an expected call of CreateInternalSnapshot.
+func (mr *MockAdapterMockRecorder) CreateInternalSnapshot(ctx, instanceName, snapLibvirtName, description, domainRunning any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateInternalSnapshot", reflect.TypeOf((*MockAdapter)(nil).CreateInternalSnapshot), ctx, instanceName, snapLibvirtName, description, domainRunning)
+}
+
+// RevertToInternalSnapshot mocks base method.
+func (m *MockAdapter) RevertToInternalSnapshot(ctx context.Context, instanceName, snapLibvirtName string, domainWasRunningAtSnapshot, domainCurrentlyRunning bool) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RevertToInternalSnapshot", ctx, instanceName, snapLibvirtName, domainWasRunningAtSnapshot, domainCurrentlyRunning)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RevertToInternalSnapshot indicates an expected call of RevertToInternalSnapshot.
+func (mr *MockAdapterMockRecorder) RevertToInternalSnapshot(ctx, instanceName, snapLibvirtName, domainWasRunningAtSnapshot, domainCurrentlyRunning any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevertToInternalSnapshot", reflect.TypeOf((*MockAdapter)(nil).RevertToInternalSnapshot), ctx, instanceName, snapLibvirtName, domainWasRunningAtSnapshot, domainCurrentlyRunning)
+}
+
+// DeleteInternalSnapshot mocks base method.
+func (m *MockAdapter) DeleteInternalSnapshot(ctx context.Context, instanceName, snapLibvirtName string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteInternalSnapshot", ctx, instanceName, snapLibvirtName)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteInternalSnapshot indicates an expected call of DeleteInternalSnapshot.
+func (mr *MockAdapterMockRecorder) DeleteInternalSnapshot(ctx, instanceName, snapLibvirtName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteInternalSnapshot", reflect.TypeOf((*MockAdapter)(nil).DeleteInternalSnapshot), ctx, instanceName, snapLibvirtName)
+}

@@ -13,6 +13,7 @@ import (
 	"caspercloud/internal/cloudinit"
 	"caspercloud/internal/instancemetrics"
 	"caspercloud/internal/libvirt"
+	"caspercloud/internal/network"
 	"caspercloud/internal/queue"
 	"caspercloud/internal/repository"
 
@@ -20,27 +21,31 @@ import (
 )
 
 const (
-	InstanceStateCreating = "creating"
-	InstanceStateRunning  = "running"
-	InstanceStateStopped  = "stopped"
-	InstanceStateDeleting = "deleting"
-	InstanceStateError    = "error"
+	InstanceStateCreating     = "creating"
+	InstanceStateRunning      = "running"
+	InstanceStateStopped      = "stopped"
+	InstanceStateDeleting     = "deleting"
+	InstanceStateError        = "error"
+	InstanceStateSnapshotting = "snapshotting"
 )
 
 const (
-	TaskTypeInstanceCreate  = "instance.create"
-	TaskTypeInstanceStart   = "instance.start"
-	TaskTypeInstanceStop    = "instance.stop"
-	TaskTypeInstanceReboot  = "instance.reboot"
-	TaskTypeInstanceDestroy = "instance.destroy"
+	TaskTypeInstanceCreate         = "instance.create"
+	TaskTypeInstanceStart          = "instance.start"
+	TaskTypeInstanceStop           = "instance.stop"
+	TaskTypeInstanceReboot         = "instance.reboot"
+	TaskTypeInstanceDestroy        = "instance.destroy"
+	TaskTypeInstanceSnapshotCreate = "instance.snapshot_create"
+	TaskTypeInstanceSnapshotRevert = "instance.snapshot_revert"
 )
 
 var (
-	ErrInvalidInstanceAction   = errors.New("invalid instance action")
-	ErrInvalidStateTransition  = errors.New("invalid instance state for this action")
+	ErrInvalidInstanceAction     = errors.New("invalid instance action")
+	ErrInvalidStateTransition    = errors.New("invalid instance state for this action")
 	ErrStatsFetcherNotConfigured = errors.New("instance stats require REDIS_URL (worker must publish metrics to the same Redis)")
-	ErrStatsNotInCache         = errors.New("no metrics yet for this instance")
-	ErrStatsStale              = errors.New("instance metrics are stale")
+	ErrStatsNotInCache           = errors.New("no metrics yet for this instance")
+	ErrStatsStale                = errors.New("instance metrics are stale")
+	ErrSnapshotNotReady          = errors.New("snapshot is not available for revert")
 )
 
 const maxStatsPayloadAge = 45 * time.Second
@@ -56,14 +61,16 @@ type volumeDetachCoordinator interface {
 }
 
 type InstanceService struct {
-	repo           InstanceStore
-	publisher      queue.TaskPublisher
-	libvirt        libvirt.Adapter
-	statsFetcher   StatsFetcher
-	volumes        volumeDetachCoordinator
-	defaultRAM     int
-	defaultVCPU    int
-	defaultBridge  string
+	repo          InstanceStore
+	publisher     queue.TaskPublisher
+	libvirt       libvirt.Adapter
+	statsFetcher  StatsFetcher
+	volumes       volumeDetachCoordinator
+	defaultRAM    int
+	defaultVCPU   int
+	defaultBridge string
+	// floatingIngress removes DNAT/SNAT during instance destroy when configured (worker).
+	floatingIngress *network.Ingress
 }
 
 type InstanceServiceOption func(*InstanceService)
@@ -79,6 +86,13 @@ func WithStatsFetcher(f StatsFetcher) InstanceServiceOption {
 func WithVolumes(v volumeDetachCoordinator) InstanceServiceOption {
 	return func(s *InstanceService) {
 		s.volumes = v
+	}
+}
+
+// WithFloatingIngress configures host NAT teardown when destroying instances that use floating IPs.
+func WithFloatingIngress(n *network.Ingress) InstanceServiceOption {
+	return func(s *InstanceService) {
+		s.floatingIngress = n
 	}
 }
 
@@ -161,15 +175,15 @@ func (s *InstanceService) CreateAsync(ctx context.Context, projectID uuid.UUID, 
 	instance, err := s.repo.CreateInstanceWithIPAM(ctx, repository.CreateInstanceParams{
 		InstanceID:     instID,
 		ProjectID:      projectID,
-		ImageID:      in.ImageID,
-		Name:         in.Name,
-		UserData:     userData,
-		InitialState: InstanceStateCreating,
-		NetworkID:    net.ID,
-		NetworkCIDR:  net.CIDR,
+		ImageID:        in.ImageID,
+		Name:           in.Name,
+		UserData:       userData,
+		InitialState:   InstanceStateCreating,
+		NetworkID:      net.ID,
+		NetworkCIDR:    net.CIDR,
 		NetworkGateway: net.Gateway,
-		BridgeName:   net.BridgeName,
-		MAC:          mac,
+		BridgeName:     net.BridgeName,
+		MAC:            mac,
 	})
 	if err != nil {
 		return nil, err
@@ -257,7 +271,7 @@ func actionAllowed(state, action string) bool {
 	case "reboot":
 		return state == InstanceStateRunning
 	case "destroy":
-		return state != InstanceStateCreating && state != InstanceStateDeleting
+		return state != InstanceStateCreating && state != InstanceStateDeleting && state != InstanceStateSnapshotting
 	default:
 		return false
 	}
@@ -315,7 +329,7 @@ func (s *InstanceService) SyncHypervisorWithDB(ctx context.Context) error {
 	}
 	var updates []repository.InstanceStateUpdate
 	for _, row := range rows {
-		if row.State == InstanceStateCreating {
+		if row.State == InstanceStateCreating || row.State == InstanceStateSnapshotting {
 			continue
 		}
 		domName := libvirt.SanitizeLibvirtName(row.Name)
@@ -410,6 +424,29 @@ func (s *InstanceService) HandleDestroyTask(ctx context.Context, taskID, project
 			return err
 		}
 	}
+	if s.floatingIngress != nil {
+		bindings, ferr := s.repo.ListActiveFloatingIPNATBindingsByInstance(ctx, projectID, instanceID)
+		if ferr != nil {
+			msg := ferr.Error()
+			_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, InstanceStateError)
+			_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+			return ferr
+		}
+		for _, b := range bindings {
+			if err := s.floatingIngress.DisassociateIP(b.PublicIP, b.PrivateIP); err != nil {
+				msg := err.Error()
+				_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, InstanceStateError)
+				_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+				return err
+			}
+		}
+	}
+	if err := s.repo.ClearFloatingIPBindingsForInstance(ctx, projectID, instanceID); err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, InstanceStateError)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
 	if err := s.libvirt.DeleteVM(ctx, inst.Name, inst.ID); err != nil {
 		msg := err.Error()
 		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, InstanceStateError)
@@ -463,16 +500,16 @@ func (s *InstanceService) HandleCreateTask(ctx context.Context, taskID, projectI
 		mac = *inst.MACAddress
 	}
 	cfg := libvirt.VMConfig{
-		InstanceID:          inst.ID,
-		InstanceName:        inst.Name,
-		Hostname:            hostname,
-		BaseImagePath:       basePath,
-		UserData:            inst.CloudInitData,
-		NetworkConfigYAML:   inst.NetworkConfigYAML,
-		MACAddress:          mac,
-		BridgeName:          bridge,
-		MemoryMB:            s.defaultRAM,
-		VCPUs:               s.defaultVCPU,
+		InstanceID:        inst.ID,
+		InstanceName:      inst.Name,
+		Hostname:          hostname,
+		BaseImagePath:     basePath,
+		UserData:          inst.CloudInitData,
+		NetworkConfigYAML: inst.NetworkConfigYAML,
+		MACAddress:        mac,
+		BridgeName:        bridge,
+		MemoryMB:          s.defaultRAM,
+		VCPUs:             s.defaultVCPU,
 	}
 	log.Printf("caspercloud worker: provisioning vm task_id=%s instance=%q base_image=%q mem_mb=%d vcpu=%d", taskID, inst.Name, basePath, cfg.MemoryMB, cfg.VCPUs)
 	if err := s.libvirt.CreateVM(ctx, cfg); err != nil {
@@ -493,6 +530,177 @@ func (s *InstanceService) HandleCreateTask(ctx context.Context, taskID, projectI
 		return err
 	}
 	log.Printf("caspercloud worker: instance.create task done task_id=%s instance_id=%s state=running", taskID, instanceID)
+	return nil
+}
+
+// ListSnapshots returns snapshot metadata for an instance.
+func (s *InstanceService) ListSnapshots(ctx context.Context, projectID, instanceID uuid.UUID) ([]repository.Snapshot, error) {
+	if _, err := s.repo.GetInstance(ctx, projectID, instanceID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListSnapshotsForInstance(ctx, projectID, instanceID)
+}
+
+// RequestSnapshotCreate locks the instance, records a snapshot row, and enqueues a worker job.
+func (s *InstanceService) RequestSnapshotCreate(ctx context.Context, projectID, instanceID uuid.UUID, name string) (*InstanceActionResult, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("%w: snapshot name is required", ErrInvalidInstanceAction)
+	}
+	snapID := uuid.New()
+	priorState, err := s.repo.BeginSnapshotCreate(ctx, projectID, instanceID, snapID, name)
+	if err != nil {
+		return nil, err
+	}
+	task, err := s.repo.CreateTask(ctx, TaskTypeInstanceSnapshotCreate, projectID, instanceID, "pending")
+	if err != nil {
+		_ = s.repo.UpdateSnapshotStatus(ctx, projectID, snapID, repository.SnapshotStatusError)
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		return nil, err
+	}
+	pubErr := s.publisher.PublishTask(ctx, queue.TaskMessage{
+		TaskID:     task.ID.String(),
+		Type:       task.Type,
+		ProjectID:  projectID.String(),
+		InstanceID: instanceID.String(),
+		SnapshotID: snapID.String(),
+		PriorState: priorState,
+	})
+	if pubErr != nil {
+		msg := pubErr.Error()
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, task.ID, "failed", &msg)
+		_ = s.repo.UpdateSnapshotStatus(ctx, projectID, snapID, repository.SnapshotStatusError)
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		return nil, pubErr
+	}
+	return &InstanceActionResult{Task: task}, nil
+}
+
+// RequestSnapshotRevert locks the instance and enqueues a revert to an existing snapshot.
+func (s *InstanceService) RequestSnapshotRevert(ctx context.Context, projectID, instanceID, snapshotID uuid.UUID) (*InstanceActionResult, error) {
+	snap, err := s.repo.GetSnapshot(ctx, projectID, instanceID, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if snap.Status != repository.SnapshotStatusAvailable {
+		return nil, ErrSnapshotNotReady
+	}
+	priorState, err := s.repo.BeginSnapshotRevert(ctx, projectID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	task, err := s.repo.CreateTask(ctx, TaskTypeInstanceSnapshotRevert, projectID, instanceID, "pending")
+	if err != nil {
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		return nil, err
+	}
+	pubErr := s.publisher.PublishTask(ctx, queue.TaskMessage{
+		TaskID:     task.ID.String(),
+		Type:       task.Type,
+		ProjectID:  projectID.String(),
+		InstanceID: instanceID.String(),
+		SnapshotID: snapshotID.String(),
+		PriorState: priorState,
+	})
+	if pubErr != nil {
+		msg := pubErr.Error()
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, task.ID, "failed", &msg)
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		return nil, pubErr
+	}
+	return &InstanceActionResult{Task: task}, nil
+}
+
+// HandleSnapshotCreateTask runs libvirt internal snapshot creation.
+func (s *InstanceService) HandleSnapshotCreateTask(ctx context.Context, taskID, projectID, instanceID, snapshotID uuid.UUID, priorState string) error {
+	log.Printf("caspercloud worker: snapshot create task_id=%s snapshot_id=%s instance_id=%s", taskID, snapshotID, instanceID)
+	if err := s.repo.UpdateTaskStatus(ctx, projectID, taskID, "running", nil); err != nil {
+		return err
+	}
+	snap, err := s.repo.GetSnapshot(ctx, projectID, instanceID, snapshotID)
+	if err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateSnapshotStatus(ctx, projectID, snapshotID, repository.SnapshotStatusError)
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
+	inst, err := s.repo.GetInstance(ctx, projectID, instanceID)
+	if err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateSnapshotStatus(ctx, projectID, snapshotID, repository.SnapshotStatusError)
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
+	domainRunning := priorState == InstanceStateRunning
+	if err := s.libvirt.CreateInternalSnapshot(ctx, inst.Name, snap.LibvirtSnapshotName(), snap.Name, domainRunning); err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateSnapshotStatus(ctx, projectID, snapshotID, repository.SnapshotStatusError)
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
+	if err := s.repo.UpdateSnapshotStatus(ctx, projectID, snapshotID, repository.SnapshotStatusAvailable); err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
+	if err := s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState); err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
+	if err := s.repo.UpdateTaskStatus(ctx, projectID, taskID, "succeeded", nil); err != nil {
+		return err
+	}
+	log.Printf("caspercloud worker: snapshot create done snapshot_id=%s", snapshotID)
+	return nil
+}
+
+// HandleSnapshotRevertTask restores a libvirt internal snapshot.
+func (s *InstanceService) HandleSnapshotRevertTask(ctx context.Context, taskID, projectID, instanceID, snapshotID uuid.UUID, priorState string) error {
+	log.Printf("caspercloud worker: snapshot revert task_id=%s snapshot_id=%s instance_id=%s", taskID, snapshotID, instanceID)
+	if err := s.repo.UpdateTaskStatus(ctx, projectID, taskID, "running", nil); err != nil {
+		return err
+	}
+	snap, err := s.repo.GetSnapshot(ctx, projectID, instanceID, snapshotID)
+	if err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
+	if snap.Status != repository.SnapshotStatusAvailable {
+		msg := "snapshot not available"
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return ErrSnapshotNotReady
+	}
+	inst, err := s.repo.GetInstance(ctx, projectID, instanceID)
+	if err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
+	domainCurrentlyRunning := priorState == InstanceStateRunning
+	if err := s.libvirt.RevertToInternalSnapshot(ctx, inst.Name, snap.LibvirtSnapshotName(), snap.DomainWasRunning, domainCurrentlyRunning); err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState)
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
+	if err := s.repo.UpdateInstanceState(ctx, projectID, instanceID, priorState); err != nil {
+		msg := err.Error()
+		_ = s.repo.UpdateTaskStatus(ctx, projectID, taskID, "failed", &msg)
+		return err
+	}
+	if err := s.repo.UpdateTaskStatus(ctx, projectID, taskID, "succeeded", nil); err != nil {
+		return err
+	}
+	log.Printf("caspercloud worker: snapshot revert done snapshot_id=%s", snapshotID)
 	return nil
 }
 

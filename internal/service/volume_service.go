@@ -22,6 +22,7 @@ const (
 )
 
 var (
+	ErrInstanceBusySnapshotting    = errors.New("instance is busy with a snapshot operation")
 	ErrInstanceNotRunning          = errors.New("instance must be running to hot-attach a volume")
 	ErrVolumeNotAvailable          = errors.New("volume is not available for attach")
 	ErrVolumeNotAttachedToInstance = errors.New("volume is not attached to this instance")
@@ -31,10 +32,10 @@ var (
 
 // VolumeService manages persistent volumes and libvirt attach/detach.
 type VolumeService struct {
-	repo     *repository.Repository
-	libvirt  libvirt.Adapter
-	qemuImg  string
-	volDir   string
+	repo    *repository.Repository
+	libvirt libvirt.Adapter
+	qemuImg string
+	volDir  string
 }
 
 func NewVolumeService(repo *repository.Repository, lv libvirt.Adapter, qemuImgPath, volumesDir string) *VolumeService {
@@ -92,6 +93,9 @@ func (s *VolumeService) AttachVolume(ctx context.Context, projectID, instanceID,
 	if err != nil {
 		return err
 	}
+	if inst.State == InstanceStateSnapshotting {
+		return ErrInstanceBusySnapshotting
+	}
 	if inst.State != InstanceStateRunning {
 		return ErrInstanceNotRunning
 	}
@@ -131,6 +135,9 @@ func (s *VolumeService) DetachVolume(ctx context.Context, projectID, instanceID,
 	}
 	if vol.InstanceID == nil || *vol.InstanceID != instanceID || vol.TargetDev == nil {
 		return ErrVolumeNotAttachedToInstance
+	}
+	if inst.State == InstanceStateSnapshotting {
+		return ErrInstanceBusySnapshotting
 	}
 	path := storage.VolumeQCOW2Path(s.volDir, volumeID)
 	live := inst.State == InstanceStateRunning

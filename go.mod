@@ -2,9 +2,7 @@
 // cannot parse the `toolchain` directive or `go 1.23.x` in this file. Example: go build -o casper ./cmd/cli
 module caspercloud
 
-go 1.23.0
-
-toolchain go1.23.12
+go 1.23
 
 require (
 	github.com/go-chi/chi/v5 v5.2.1

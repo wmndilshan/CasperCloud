@@ -112,6 +112,16 @@ func (r *Repository) FinalizeInstanceDestroy(ctx context.Context, projectID, tas
 	if cmd.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	// Release floating IP bindings before deleting the instance (FK RESTRICT on floating_ips.instance_id).
+	if _, err := tx.Exec(ctx, `
+		UPDATE floating_ips
+		SET instance_id = NULL,
+		    private_ip = NULL,
+		    status = CASE WHEN status = 'active' THEN 'allocated' ELSE status END,
+		    updated_at = now()
+		WHERE instance_id = $1`, instanceID); err != nil {
+		return err
+	}
 	if err := r.DeleteInstanceTx(ctx, tx, projectID, instanceID); err != nil {
 		return err
 	}

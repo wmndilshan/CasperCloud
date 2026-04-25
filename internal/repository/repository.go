@@ -11,7 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound               = errors.New("not found")
+	ErrNoFloatingIPsAvailable = errors.New("no floating ips available in pool")
+)
 
 type Repository struct {
 	pool *pgxpool.Pool
@@ -304,17 +307,31 @@ func (r *Repository) DeleteInstance(ctx context.Context, projectID, instanceID u
 	return nil
 }
 
+func scanTaskRow(row pgx.Row) (*Task, error) {
+	var t Task
+	if err := row.Scan(&t.ID, &t.Type, &t.ProjectID, &t.InstanceID, &t.Status, &t.Error, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 func (r *Repository) CreateTask(ctx context.Context, taskType string, projectID, instanceID uuid.UUID, status string) (*Task, error) {
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO tasks (type, project_id, instance_id, status)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, type, project_id, instance_id, status, error, created_at, updated_at`,
 		taskType, projectID, instanceID, status)
-	var t Task
-	if err := row.Scan(&t.ID, &t.Type, &t.ProjectID, &t.InstanceID, &t.Status, &t.Error, &t.CreatedAt, &t.UpdatedAt); err != nil {
-		return nil, err
-	}
-	return &t, nil
+	return scanTaskRow(row)
+}
+
+// CreateTaskWithoutInstance inserts a task row with NULL instance_id (e.g. floating_ip.disassociate).
+func (r *Repository) CreateTaskWithoutInstance(ctx context.Context, taskType string, projectID uuid.UUID, status string) (*Task, error) {
+	row := r.pool.QueryRow(ctx, `
+		INSERT INTO tasks (type, project_id, instance_id, status)
+		VALUES ($1, $2, NULL, $3)
+		RETURNING id, type, project_id, instance_id, status, error, created_at, updated_at`,
+		taskType, projectID, status)
+	return scanTaskRow(row)
 }
 
 func (r *Repository) UpdateTaskStatus(ctx context.Context, projectID, taskID uuid.UUID, status string, errMessage *string) error {
@@ -338,14 +355,14 @@ func (r *Repository) GetTask(ctx context.Context, projectID, taskID uuid.UUID) (
 		SELECT id, type, project_id, instance_id, status, error, created_at, updated_at
 		FROM tasks
 		WHERE id = $2 AND project_id = $1`, projectID, taskID)
-	var t Task
-	if err := row.Scan(&t.ID, &t.Type, &t.ProjectID, &t.InstanceID, &t.Status, &t.Error, &t.CreatedAt, &t.UpdatedAt); err != nil {
+	t, err := scanTaskRow(row)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	return &t, nil
+	return t, nil
 }
 
 const staleRunningTaskMessage = "reconciled: task stuck in running for more than 30 minutes"

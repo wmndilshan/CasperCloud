@@ -36,6 +36,10 @@ type docInstancesData struct {
 	Data []repository.Instance `json:"data"`
 }
 
+type docSnapshotsData struct {
+	Data []repository.Snapshot `json:"data"`
+}
+
 type docCreateInstanceAccepted struct {
 	Data service.CreateInstanceResult `json:"data"`
 }

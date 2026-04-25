@@ -13,6 +13,7 @@ import (
 	"caspercloud/internal/db"
 	"caspercloud/internal/instancemetrics"
 	"caspercloud/internal/libvirt"
+	"caspercloud/internal/network"
 	"caspercloud/internal/queue"
 	"caspercloud/internal/repository"
 	"caspercloud/internal/service"
@@ -45,8 +46,11 @@ func main() {
 	_ = auth.NewJWTManager(cfg.JWTSecret)
 	libvirtAdapter := libvirt.NewLibvirtAdapter(cfg)
 	volSvc := service.NewVolumeService(repo, libvirtAdapter, cfg.QEMUImgPath, cfg.VMVolumesDir)
-	instanceSvc := service.NewInstanceService(repo, queueClient, libvirtAdapter, cfg.VMDefaultRAM, cfg.VMDefaultVCPU, cfg.LibvirtBridge, service.WithVolumes(volSvc))
-	w := worker.New(queueClient, instanceSvc)
+	ingress := network.NewIngress(cfg.IptablesPath, cfg.InstanceNetworkCIDR)
+	instanceOpts := []service.InstanceServiceOption{service.WithVolumes(volSvc), service.WithFloatingIngress(ingress)}
+	instanceSvc := service.NewInstanceService(repo, queueClient, libvirtAdapter, cfg.VMDefaultRAM, cfg.VMDefaultVCPU, cfg.LibvirtBridge, instanceOpts...)
+	floatingIPSvc := service.NewFloatingIPService(repo, queueClient, ingress)
+	w := worker.New(queueClient, instanceSvc, floatingIPSvc)
 
 	memStore := instancemetrics.NewMemoryStore()
 	var rdb *redis.Client

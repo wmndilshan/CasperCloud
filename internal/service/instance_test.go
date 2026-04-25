@@ -21,7 +21,7 @@ func (noopLibvirt) CreateVM(context.Context, libvirt.VMConfig) error { return ni
 func (noopLibvirt) StartVM(context.Context, string) error            { return nil }
 func (noopLibvirt) StopVM(context.Context, string) error             { return nil }
 func (noopLibvirt) GracefulShutdown(context.Context, string) error   { return nil }
-func (noopLibvirt) HardPowerOff(context.Context, string) error      { return nil }
+func (noopLibvirt) HardPowerOff(context.Context, string) error       { return nil }
 func (noopLibvirt) RebootVM(context.Context, string) error           { return nil }
 func (noopLibvirt) DeleteVM(context.Context, string, uuid.UUID) error {
 	return nil
@@ -40,6 +40,16 @@ func (noopLibvirt) AttachVolume(context.Context, string, string, string, bool) e
 
 func (noopLibvirt) DetachVolume(context.Context, string, string, string, bool) error { return nil }
 
+func (noopLibvirt) CreateInternalSnapshot(context.Context, string, string, string, bool) error {
+	return nil
+}
+
+func (noopLibvirt) RevertToInternalSnapshot(context.Context, string, string, bool, bool) error {
+	return nil
+}
+
+func (noopLibvirt) DeleteInternalSnapshot(context.Context, string, string) error { return nil }
+
 type recordingPublisher struct {
 	msgs []queue.TaskMessage
 	err  error
@@ -54,16 +64,16 @@ func (r *recordingPublisher) PublishTask(ctx context.Context, msg queue.TaskMess
 }
 
 type fakeInstanceStore struct {
-	image           *repository.Image
-	getImageErr     error
-	instance        *repository.Instance
-	createInstErr   error
-	task            *repository.Task
-	createTaskErr   error
-	lastInstState   string
-	lastTaskStatus  string
-	defaultNetwork  *repository.Network
-	createParams    *repository.CreateInstanceParams
+	image          *repository.Image
+	getImageErr    error
+	instance       *repository.Instance
+	createInstErr  error
+	task           *repository.Task
+	createTaskErr  error
+	lastInstState  string
+	lastTaskStatus string
+	defaultNetwork *repository.Network
+	createParams   *repository.CreateInstanceParams
 }
 
 func (f *fakeInstanceStore) GetImage(ctx context.Context, projectID, imageID uuid.UUID) (*repository.Image, error) {
@@ -119,11 +129,12 @@ func (f *fakeInstanceStore) CreateTask(ctx context.Context, taskType string, pro
 	if f.task != nil {
 		return f.task, nil
 	}
+	inst := instanceID
 	return &repository.Task{
 		ID:         uuid.New(),
 		Type:       taskType,
 		ProjectID:  projectID,
-		InstanceID: instanceID,
+		InstanceID: &inst,
 		Status:     status,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -173,6 +184,34 @@ func (f *fakeInstanceStore) CountVolumesAttachedToInstance(ctx context.Context, 
 	return 0, nil
 }
 
+func (f *fakeInstanceStore) BeginSnapshotCreate(ctx context.Context, projectID, instanceID, snapshotID uuid.UUID, name string) (string, error) {
+	return InstanceStateRunning, nil
+}
+
+func (f *fakeInstanceStore) BeginSnapshotRevert(ctx context.Context, projectID, instanceID uuid.UUID) (string, error) {
+	return InstanceStateRunning, nil
+}
+
+func (f *fakeInstanceStore) UpdateSnapshotStatus(ctx context.Context, projectID, snapshotID uuid.UUID, status string) error {
+	return nil
+}
+
+func (f *fakeInstanceStore) ListSnapshotsForInstance(ctx context.Context, projectID, instanceID uuid.UUID) ([]repository.Snapshot, error) {
+	return nil, nil
+}
+
+func (f *fakeInstanceStore) GetSnapshot(ctx context.Context, projectID, instanceID, snapshotID uuid.UUID) (*repository.Snapshot, error) {
+	return nil, repository.ErrNotFound
+}
+
+func (f *fakeInstanceStore) ListActiveFloatingIPNATBindingsByInstance(ctx context.Context, projectID, instanceID uuid.UUID) ([]repository.FloatingIPNATBinding, error) {
+	return nil, nil
+}
+
+func (f *fakeInstanceStore) ClearFloatingIPBindingsForInstance(ctx context.Context, projectID, instanceID uuid.UUID) error {
+	return nil
+}
+
 func TestInstanceService_CreateAsync(t *testing.T) {
 	projectID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	imageID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
@@ -213,15 +252,18 @@ func TestInstanceService_CreateAsync(t *testing.T) {
 			store: &fakeInstanceStore{
 				image:          &repository.Image{ID: imageID, ProjectID: projectID, Name: "img", SourceURL: "/tmp/base.qcow2"},
 				defaultNetwork: defaultNet,
-				task: &repository.Task{
-					ID:         taskID,
-					Type:       "instance.create",
-					ProjectID:  projectID,
-					InstanceID: uuid.Nil,
-					Status:     "pending",
-					CreatedAt:  time.Now(),
-					UpdatedAt:  time.Now(),
-				},
+				task: func() *repository.Task {
+					z := uuid.Nil
+					return &repository.Task{
+						ID:         taskID,
+						Type:       "instance.create",
+						ProjectID:  projectID,
+						InstanceID: &z,
+						Status:     "pending",
+						CreatedAt:  time.Now(),
+						UpdatedAt:  time.Now(),
+					}
+				}(),
 			},
 			publisher:    &recordingPublisher{},
 			wantPubCount: 1,
@@ -244,15 +286,18 @@ func TestInstanceService_CreateAsync(t *testing.T) {
 			store: &fakeInstanceStore{
 				image:          &repository.Image{ID: imageID, ProjectID: projectID, Name: "img", SourceURL: "/tmp/x"},
 				defaultNetwork: defaultNet,
-				task: &repository.Task{
-					ID:         taskID,
-					Type:       "instance.create",
-					ProjectID:  projectID,
-					InstanceID: uuid.Nil,
-					Status:     "pending",
-					CreatedAt:  time.Now(),
-					UpdatedAt:  time.Now(),
-				},
+				task: func() *repository.Task {
+					z := uuid.Nil
+					return &repository.Task{
+						ID:         taskID,
+						Type:       "instance.create",
+						ProjectID:  projectID,
+						InstanceID: &z,
+						Status:     "pending",
+						CreatedAt:  time.Now(),
+						UpdatedAt:  time.Now(),
+					}
+				}(),
 			},
 			publisher:    &recordingPublisher{err: errors.New("amqp down")},
 			wantPubErr:   true,
@@ -316,13 +361,14 @@ func TestInstanceService_RequestInstanceAction_StartEnqueues(t *testing.T) {
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
+	instID := instanceID
 	store := &fakeInstanceStore{
 		instance: inst,
 		task: &repository.Task{
 			ID:         taskID,
 			Type:       TaskTypeInstanceStart,
 			ProjectID:  projectID,
-			InstanceID: instanceID,
+			InstanceID: &instID,
 			Status:     "pending",
 			CreatedAt:  time.Now(),
 			UpdatedAt:  time.Now(),

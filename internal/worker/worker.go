@@ -14,12 +14,13 @@ import (
 )
 
 type Worker struct {
-	queueClient *queue.Client
-	instanceSvc *service.InstanceService
+	queueClient   *queue.Client
+	instanceSvc   *service.InstanceService
+	floatingIPSvc *service.FloatingIPService
 }
 
-func New(queueClient *queue.Client, instanceSvc *service.InstanceService) *Worker {
-	return &Worker{queueClient: queueClient, instanceSvc: instanceSvc}
+func New(queueClient *queue.Client, instanceSvc *service.InstanceService, floatingIPSvc *service.FloatingIPService) *Worker {
+	return &Worker{queueClient: queueClient, instanceSvc: instanceSvc, floatingIPSvc: floatingIPSvc}
 }
 
 // Run consumes messages until ctx is cancelled, then stops the consumer and finishes any in-flight delivery.
@@ -136,30 +137,84 @@ func (w *Worker) handleMessageBody(ctx context.Context, body []byte) error {
 		log.Printf("caspercloud worker: bad project_id %q: %v", payload.ProjectID, err)
 		return err
 	}
-	instanceID, err := uuid.Parse(payload.InstanceID)
-	if err != nil {
-		log.Printf("caspercloud worker: bad instance_id %q: %v", payload.InstanceID, err)
-		return err
-	}
 
 	switch payload.Type {
-	case service.TaskTypeInstanceCreate:
-		return w.instanceSvc.HandleCreateTask(ctx, taskID, projectID, instanceID)
-	case service.TaskTypeInstanceStart:
-		return w.instanceSvc.HandleStartTask(ctx, taskID, projectID, instanceID)
-	case service.TaskTypeInstanceStop:
-		return w.instanceSvc.HandleStopTask(ctx, taskID, projectID, instanceID)
-	case service.TaskTypeInstanceReboot:
-		return w.instanceSvc.HandleRebootTask(ctx, taskID, projectID, instanceID)
-	case service.TaskTypeInstanceDestroy:
-		return w.instanceSvc.HandleDestroyTask(ctx, taskID, projectID, instanceID)
+	case service.TaskTypeFloatingIPAssociate:
+		if w.floatingIPSvc == nil {
+			return fmt.Errorf("floating_ip.associate: service not configured")
+		}
+		if payload.FloatingIPID == "" {
+			return fmt.Errorf("floating_ip.associate: missing floating_ip_id")
+		}
+		if payload.InstanceID == "" {
+			return fmt.Errorf("floating_ip.associate: missing instance_id")
+		}
+		fipID, err := uuid.Parse(payload.FloatingIPID)
+		if err != nil {
+			return fmt.Errorf("floating_ip_id: %w", err)
+		}
+		instanceID, err := uuid.Parse(payload.InstanceID)
+		if err != nil {
+			return fmt.Errorf("instance_id: %w", err)
+		}
+		return w.floatingIPSvc.HandleAssociateTask(ctx, taskID, projectID, instanceID, fipID)
+
+	case service.TaskTypeFloatingIPDisassociate:
+		if w.floatingIPSvc == nil {
+			return fmt.Errorf("floating_ip.disassociate: service not configured")
+		}
+		if payload.PublicIP == "" || payload.PrivateIP == "" {
+			return fmt.Errorf("floating_ip.disassociate: missing public_ip or private_ip")
+		}
+		return w.floatingIPSvc.HandleDisassociateTask(ctx, taskID, projectID, payload.PublicIP, payload.PrivateIP)
+
 	default:
-		log.Printf("caspercloud worker: unknown task type %q (ack)", payload.Type)
-		return nil
+		if payload.InstanceID == "" {
+			return fmt.Errorf("missing instance_id for task type %q", payload.Type)
+		}
+		instanceID, err := uuid.Parse(payload.InstanceID)
+		if err != nil {
+			log.Printf("caspercloud worker: bad instance_id %q: %v", payload.InstanceID, err)
+			return err
+		}
+
+		switch payload.Type {
+		case service.TaskTypeInstanceCreate:
+			return w.instanceSvc.HandleCreateTask(ctx, taskID, projectID, instanceID)
+		case service.TaskTypeInstanceStart:
+			return w.instanceSvc.HandleStartTask(ctx, taskID, projectID, instanceID)
+		case service.TaskTypeInstanceStop:
+			return w.instanceSvc.HandleStopTask(ctx, taskID, projectID, instanceID)
+		case service.TaskTypeInstanceReboot:
+			return w.instanceSvc.HandleRebootTask(ctx, taskID, projectID, instanceID)
+		case service.TaskTypeInstanceDestroy:
+			return w.instanceSvc.HandleDestroyTask(ctx, taskID, projectID, instanceID)
+		case service.TaskTypeInstanceSnapshotCreate:
+			if payload.SnapshotID == "" || payload.PriorState == "" {
+				return fmt.Errorf("snapshot create task missing snapshot_id or prior_state")
+			}
+			snapID, err := uuid.Parse(payload.SnapshotID)
+			if err != nil {
+				return fmt.Errorf("snapshot_id: %w", err)
+			}
+			return w.instanceSvc.HandleSnapshotCreateTask(ctx, taskID, projectID, instanceID, snapID, payload.PriorState)
+		case service.TaskTypeInstanceSnapshotRevert:
+			if payload.SnapshotID == "" || payload.PriorState == "" {
+				return fmt.Errorf("snapshot revert task missing snapshot_id or prior_state")
+			}
+			snapID, err := uuid.Parse(payload.SnapshotID)
+			if err != nil {
+				return fmt.Errorf("snapshot_id: %w", err)
+			}
+			return w.instanceSvc.HandleSnapshotRevertTask(ctx, taskID, projectID, instanceID, snapID, payload.PriorState)
+		default:
+			log.Printf("caspercloud worker: unknown task type %q (ack)", payload.Type)
+			return nil
+		}
 	}
 }
 
-// RunStateSync periodically reconciles Postgres instance state with libvirt domain state.
+// RunStateSync periodically reconciles Postgres instance state with libvirt domain state and floating IP iptables.
 func (w *Worker) RunStateSync(ctx context.Context) {
 	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
@@ -170,6 +225,11 @@ func (w *Worker) RunStateSync(ctx context.Context) {
 		case <-t.C:
 			if err := w.instanceSvc.SyncHypervisorWithDB(ctx); err != nil {
 				log.Printf("caspercloud worker: state sync: %v", err)
+			}
+			if w.floatingIPSvc != nil {
+				if err := w.floatingIPSvc.ReconcileActiveFloatingIngress(ctx); err != nil {
+					log.Printf("caspercloud worker: floating ip reconcile: %v", err)
+				}
 			}
 		}
 	}

@@ -27,7 +27,16 @@ type TaskMessage struct {
 	TaskID     string `json:"task_id"`
 	Type       string `json:"type"`
 	ProjectID  string `json:"project_id"`
-	InstanceID string `json:"instance_id"`
+	InstanceID string `json:"instance_id,omitempty"`
+	// SnapshotID is the snapshots.id UUID string for snapshot-related tasks.
+	SnapshotID string `json:"snapshot_id,omitempty"`
+	// PriorState is the instance state before locking to snapshotting ("running" or "stopped").
+	PriorState string `json:"prior_state,omitempty"`
+	// FloatingIPID is floating_ips.id for floating_ip.* tasks.
+	FloatingIPID string `json:"floating_ip_id,omitempty"`
+	// PublicIP / PrivateIP are set for floating_ip.disassociate (DB row cleared before the worker runs).
+	PublicIP  string `json:"public_ip,omitempty"`
+	PrivateIP string `json:"private_ip,omitempty"`
 }
 
 func New(url string) (*Client, error) {
