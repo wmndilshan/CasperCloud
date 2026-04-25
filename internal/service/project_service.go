@@ -8,15 +8,23 @@ import (
 )
 
 type ProjectService struct {
-	repo *repository.Repository
+	repo              *repository.Repository
+	defaultNetCIDR    string
+	defaultNetGateway string
+	defaultBridge     string
 }
 
-func NewProjectService(repo *repository.Repository) *ProjectService {
-	return &ProjectService{repo: repo}
+func NewProjectService(repo *repository.Repository, defaultNetCIDR, defaultNetGateway, defaultBridge string) *ProjectService {
+	return &ProjectService{
+		repo:              repo,
+		defaultNetCIDR:    defaultNetCIDR,
+		defaultNetGateway: defaultNetGateway,
+		defaultBridge:     defaultBridge,
+	}
 }
 
 func (s *ProjectService) CreateProject(ctx context.Context, userID uuid.UUID, name string) (*repository.Project, error) {
-	return s.repo.CreateProject(ctx, userID, name)
+	return s.repo.CreateProject(ctx, userID, name, s.defaultNetCIDR, s.defaultNetGateway, s.defaultBridge)
 }
 
 func (s *ProjectService) ListProjects(ctx context.Context, userID uuid.UUID) ([]repository.Project, error) {
@@ -32,4 +40,9 @@ func (s *ProjectService) EnsureProjectAccess(ctx context.Context, userID, projec
 		return repository.ErrNotFound
 	}
 	return nil
+}
+
+// ListNetworks returns all networks for a project.
+func (s *ProjectService) ListNetworks(ctx context.Context, projectID uuid.UUID) ([]repository.Network, error) {
+	return s.repo.ListNetworksForProject(ctx, projectID)
 }

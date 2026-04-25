@@ -20,25 +20,38 @@ services:
       - "5672:5672"
       - "15672:15672"
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
   api:
     build: .
     command: ["api"]
     depends_on:
       - db
       - rabbitmq
+      - redis
     environment:
       HTTP_ADDR: ":8080"
       DATABASE_URL: "postgres://postgres:postgres@db:5432/caspercloud?sslmode=disable"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      REDIS_URL: "redis://redis:6379/0"
       JWT_SECRET: "dev-secret"
       LIBVIRT_URI: "qemu:///system"
       LIBVIRT_NETWORK: "default"
+      LIBVIRT_BRIDGE: "virbr0"
+      INSTANCE_NETWORK_CIDR: "192.168.122.0/24"
+      INSTANCE_NETWORK_GATEWAY: "192.168.122.1"
       VM_DEFAULT_RAM_MB: "2048"
       VM_DEFAULT_VCPU: "2"
       VM_STORAGE_DIR: "/var/lib/libvirt/images"
       VM_INSTANCES_DIR: "/var/lib/caspercloud/instances"
+      VM_VOLUMES_DIR: "/var/lib/caspercloud/volumes"
     ports:
       - "8080:8080"
+    volumes:
+      - caspercloud_volumes:/var/lib/caspercloud/volumes
 
   worker:
     build: .
@@ -46,19 +59,30 @@ services:
     depends_on:
       - db
       - rabbitmq
+      - redis
     environment:
       DATABASE_URL: "postgres://postgres:postgres@db:5432/caspercloud?sslmode=disable"
       RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      REDIS_URL: "redis://redis:6379/0"
+      WORKER_METRICS_ADDR: ":9090"
       JWT_SECRET: "dev-secret"
       LIBVIRT_URI: "qemu:///system"
       LIBVIRT_NETWORK: "default"
+      LIBVIRT_BRIDGE: "virbr0"
+      INSTANCE_NETWORK_CIDR: "192.168.122.0/24"
+      INSTANCE_NETWORK_GATEWAY: "192.168.122.1"
       VM_DEFAULT_RAM_MB: "2048"
       VM_DEFAULT_VCPU: "2"
       VM_STORAGE_DIR: "/var/lib/libvirt/images"
       VM_INSTANCES_DIR: "/var/lib/caspercloud/instances"
+      VM_VOLUMES_DIR: "/var/lib/caspercloud/volumes"
     volumes:
       - caspercloud_instances:/var/lib/caspercloud/instances
+      - caspercloud_volumes:/var/lib/caspercloud/volumes
+    ports:
+      - "9090:9090"
 
 volumes:
   pgdata:
   caspercloud_instances:
+  caspercloud_volumes:

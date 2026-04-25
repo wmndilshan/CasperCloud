@@ -4,14 +4,11 @@ import (
 	"errors"
 	"net/http"
 
+	"caspercloud/internal/apitypes"
 	"caspercloud/internal/repository"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
-
-type createProjectRequest struct {
-	Name string `json:"name" validate:"required,min=1,max=128"`
-}
 
 // handleCreateProject creates a project for the authenticated user.
 // @Summary      Create project
@@ -19,7 +16,7 @@ type createProjectRequest struct {
 // @Tags         projects
 // @Accept       json
 // @Produce      json
-// @Param        body  body      createProjectRequest  true  "Project name"
+// @Param        body  body      apitypes.CreateProjectRequest  true  "Project name"
 // @Success      201   {object}  docProjectData
 // @Failure      400   {object}  map[string]interface{}
 // @Failure      401   {object}  map[string]interface{}
@@ -32,7 +29,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	var req createProjectRequest
+	var req apitypes.CreateProjectRequest
 	if err := decodeAndValidate(r, &req); err != nil {
 		respondInvalidRequest(w, err)
 		return

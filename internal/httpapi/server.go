@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 
 	"caspercloud/internal/auth"
@@ -16,6 +17,7 @@ type Server struct {
 	projectSvc  *service.ProjectService
 	imageSvc    *service.ImageService
 	instanceSvc *service.InstanceService
+	volumeSvc   *service.VolumeService
 	jwt         *auth.JWTManager
 }
 
@@ -24,6 +26,7 @@ func NewServer(
 	projectSvc *service.ProjectService,
 	imageSvc *service.ImageService,
 	instanceSvc *service.InstanceService,
+	volumeSvc *service.VolumeService,
 	jwt *auth.JWTManager,
 ) *Server {
 	return &Server{
@@ -31,6 +34,7 @@ func NewServer(
 		projectSvc:  projectSvc,
 		imageSvc:    imageSvc,
 		instanceSvc: instanceSvc,
+		volumeSvc:   volumeSvc,
 		jwt:         jwt,
 	}
 }
@@ -70,13 +74,23 @@ func (s *Server) Router() http.Handler {
 					r.Put("/{imageID}", s.handleUpdateImage)
 					r.Delete("/{imageID}", s.handleDeleteImage)
 				})
+				r.Route("/volumes", func(r chi.Router) {
+					r.Post("/", s.handleCreateVolume)
+					r.Get("/", s.handleListVolumes)
+					r.Get("/{volumeID}", s.handleGetVolume)
+					r.Delete("/{volumeID}", s.handleDeleteVolume)
+				})
+				r.Route("/networks", func(r chi.Router) {
+					r.Get("/", s.handleListNetworks)
+				})
 				r.Route("/instances", func(r chi.Router) {
 					r.Post("/", s.handleCreateInstance)
 					r.Get("/", s.handleListInstances)
 					r.Get("/{instanceID}", s.handleGetInstance)
-					r.Post("/{instanceID}/start", s.handleStartInstance)
-					r.Post("/{instanceID}/stop", s.handleStopInstance)
-					r.Post("/{instanceID}/reboot", s.handleRebootInstance)
+					r.Get("/{instanceID}/stats", s.handleGetInstanceStats)
+					r.Post("/{instanceID}/actions", s.handleInstanceActions)
+					r.Post("/{instanceID}/attach", s.handleAttachVolume)
+					r.Post("/{instanceID}/detach", s.handleDetachVolume)
 					r.Delete("/{instanceID}", s.handleDeleteInstance)
 				})
 			})
@@ -103,6 +117,21 @@ func mapRepoError(err error) (int, string) {
 	}
 	if err == repository.ErrNotFound {
 		return http.StatusNotFound, "resource not found"
+	}
+	if errors.Is(err, repository.ErrNoIPsAvailable) {
+		return http.StatusConflict, "no free ip addresses in network pool"
+	}
+	if errors.Is(err, service.ErrInvalidStateTransition) || errors.Is(err, service.ErrInvalidInstanceAction) {
+		return http.StatusBadRequest, err.Error()
+	}
+	if errors.Is(err, service.ErrStatsFetcherNotConfigured) || errors.Is(err, service.ErrStatsNotInCache) || errors.Is(err, service.ErrStatsStale) {
+		return http.StatusServiceUnavailable, err.Error()
+	}
+	if errors.Is(err, repository.ErrVolumeInUse) || errors.Is(err, service.ErrVolumeNameConflict) || errors.Is(err, service.ErrInstanceHasAttachedVolumes) {
+		return http.StatusConflict, err.Error()
+	}
+	if errors.Is(err, service.ErrInstanceNotRunning) || errors.Is(err, service.ErrVolumeNotAvailable) || errors.Is(err, service.ErrVolumeNotAttachedToInstance) {
+		return http.StatusBadRequest, err.Error()
 	}
 	return http.StatusInternalServerError, "internal server error"
 }

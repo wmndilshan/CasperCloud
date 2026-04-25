@@ -17,22 +17,22 @@ import (
 
 // LibvirtAdapter provisions and controls VMs via libvirt using qemu:///system (or configured URI).
 type LibvirtAdapter struct {
-	uri          string
-	instancesDir string
-	networkName  string
-	qemuImg      string
-	cloudLocalds string
-	genisoimage  string
+	uri           string
+	instancesDir  string
+	defaultBridge string
+	qemuImg       string
+	cloudLocalds  string
+	genisoimage   string
 }
 
 func NewLibvirtAdapter(cfg *config.Config) *LibvirtAdapter {
 	return &LibvirtAdapter{
-		uri:          cfg.LibvirtURI,
-		instancesDir: cfg.VMInstancesDir,
-		networkName:  cfg.LibvirtNetwork,
-		qemuImg:      cfg.QEMUImgPath,
-		cloudLocalds: cfg.CloudLocalDSPath,
-		genisoimage:  cfg.GenisoimagePath,
+		uri:           cfg.LibvirtURI,
+		instancesDir:  cfg.VMInstancesDir,
+		defaultBridge: cfg.LibvirtBridge,
+		qemuImg:       cfg.QEMUImgPath,
+		cloudLocalds:  cfg.CloudLocalDSPath,
+		genisoimage:   cfg.GenisoimagePath,
 	}
 }
 
@@ -82,7 +82,15 @@ func (a *LibvirtAdapter) CreateVM(ctx context.Context, cfg VMConfig) error {
 		hostname = cfg.InstanceName
 	}
 	log.Printf("caspercloud libvirt: building NoCloud ISO instance_id=%s path=%s", cfg.InstanceID, seedPath)
-	if err := cloudinit.BuildNoCloudISO(ctx, isoWork, seedPath, cfg.UserData, cfg.InstanceID.String(), hostname, a.cloudLocalds, a.genisoimage); err != nil {
+	bridge := strings.TrimSpace(cfg.BridgeName)
+	if bridge == "" {
+		bridge = a.defaultBridge
+	}
+	mac := strings.TrimSpace(cfg.MACAddress)
+	if mac == "" {
+		return fmt.Errorf("vm config: mac address is required for provisioning")
+	}
+	if err := cloudinit.BuildNoCloudISO(ctx, isoWork, seedPath, cfg.UserData, cfg.InstanceID.String(), hostname, cfg.NetworkConfigYAML, a.cloudLocalds, a.genisoimage); err != nil {
 		_ = os.RemoveAll(instDir)
 		return fmt.Errorf("nocloud iso: %w", err)
 	}
@@ -111,7 +119,8 @@ func (a *LibvirtAdapter) CreateVM(ctx context.Context, cfg VMConfig) error {
 		UUID:        cfg.InstanceID.String(),
 		MemoryKiB:   memKiB,
 		VCPUs:       cfg.VCPUs,
-		NetworkName: a.networkName,
+		BridgeName:  bridge,
+		MACAddress:  strings.ToLower(mac),
 		DiskPath:    diskAbs,
 		SeedISOPath: seedAbs,
 	})
@@ -189,6 +198,10 @@ func (a *LibvirtAdapter) StartVM(ctx context.Context, instanceName string) error
 }
 
 func (a *LibvirtAdapter) StopVM(ctx context.Context, instanceName string) error {
+	return a.GracefulShutdown(ctx, instanceName)
+}
+
+func (a *LibvirtAdapter) RebootVM(ctx context.Context, instanceName string) error {
 	conn, err := libvirtgo.NewConnect(a.uri)
 	if err != nil {
 		return fmt.Errorf("libvirt connect: %w", err)
@@ -206,28 +219,8 @@ func (a *LibvirtAdapter) StopVM(ctx context.Context, instanceName string) error 
 		return fmt.Errorf("is_active: %w", err)
 	}
 	if !active {
-		return nil
+		return fmt.Errorf("domain reboot: domain %q is not running", instanceName)
 	}
-	if err := dom.Shutdown(); err != nil {
-		return fmt.Errorf("domain shutdown: %w", err)
-	}
-	_ = ctx
-	return nil
-}
-
-func (a *LibvirtAdapter) RebootVM(ctx context.Context, instanceName string) error {
-	conn, err := libvirtgo.NewConnect(a.uri)
-	if err != nil {
-		return fmt.Errorf("libvirt connect: %w", err)
-	}
-	defer func() { _, _ = conn.Close() }()
-
-	dom, err := conn.LookupDomainByName(SanitizeLibvirtName(instanceName))
-	if err != nil {
-		return fmt.Errorf("lookup domain %q: %w", instanceName, err)
-	}
-	defer dom.Free()
-
 	if err := dom.Reboot(libvirtgo.DOMAIN_REBOOT_DEFAULT); err != nil {
 		return fmt.Errorf("domain reboot: %w", err)
 	}

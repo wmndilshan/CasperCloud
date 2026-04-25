@@ -3,6 +3,7 @@ package libvirt
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"text/template"
 )
 
@@ -11,7 +12,8 @@ type domainXMLInput struct {
 	UUID        string
 	MemoryKiB   int
 	VCPUs       int
-	NetworkName string
+	BridgeName  string
+	MACAddress  string
 	DiskPath    string
 	SeedISOPath string
 }
@@ -43,8 +45,9 @@ const domainXMLTemplate = `<domain type='qemu'>
       <target dev='sda' bus='sata'/>
       <readonly/>
     </disk>
-    <interface type='network'>
-      <source network='{{ .NetworkName }}'/>
+    <interface type='bridge'>
+      <source bridge='{{ .BridgeName }}'/>
+      <mac address='{{ .MACAddress }}'/>
       <model type='virtio'/>
     </interface>
     <console type='pty'>
@@ -58,6 +61,12 @@ const domainXMLTemplate = `<domain type='qemu'>
 `
 
 func renderDomainXML(in domainXMLInput) (string, error) {
+	if strings.TrimSpace(in.BridgeName) == "" {
+		return "", fmt.Errorf("bridge name is required")
+	}
+	if strings.TrimSpace(in.MACAddress) == "" {
+		return "", fmt.Errorf("mac address is required")
+	}
 	tpl, err := template.New("domain").Parse(domainXMLTemplate)
 	if err != nil {
 		return "", fmt.Errorf("parse domain template: %w", err)

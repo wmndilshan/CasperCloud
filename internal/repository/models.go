@@ -30,14 +30,19 @@ type Image struct {
 }
 
 type Instance struct {
-	ID            uuid.UUID `json:"id"`
-	ProjectID     uuid.UUID `json:"project_id"`
-	ImageID       uuid.UUID `json:"image_id"`
-	Name          string    `json:"name"`
-	State         string    `json:"state"`
-	CloudInitData string    `json:"cloud_init_data,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID                uuid.UUID  `json:"id"`
+	ProjectID         uuid.UUID  `json:"project_id"`
+	ImageID           uuid.UUID  `json:"image_id"`
+	Name              string     `json:"name"`
+	State             string     `json:"state"`
+	CloudInitData     string     `json:"cloud_init_data,omitempty"`
+	NetworkID         *uuid.UUID `json:"network_id,omitempty"`
+	MACAddress        *string    `json:"mac_address,omitempty"`
+	BridgeName        string     `json:"bridge_name,omitempty"`
+	IPv4Address       *string    `json:"ipv4_address,omitempty"`
+	NetworkConfigYAML string     `json:"-"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 type Task struct {

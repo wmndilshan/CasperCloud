@@ -26,10 +26,13 @@ import (
 	"caspercloud/internal/config"
 	"caspercloud/internal/db"
 	"caspercloud/internal/httpapi"
+	"caspercloud/internal/instancemetrics"
 	"caspercloud/internal/libvirt"
 	"caspercloud/internal/queue"
 	"caspercloud/internal/repository"
 	"caspercloud/internal/service"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -56,11 +59,25 @@ func main() {
 	libvirtAdapter := libvirt.NewLibvirtAdapter(cfg)
 
 	authSvc := service.NewAuthService(repo, jwtManager)
-	projectSvc := service.NewProjectService(repo)
+	projectSvc := service.NewProjectService(repo, cfg.InstanceNetworkCIDR, cfg.InstanceNetworkGateway, cfg.LibvirtBridge)
 	imageSvc := service.NewImageService(repo)
-	instanceSvc := service.NewInstanceService(repo, queueClient, libvirtAdapter, cfg.VMDefaultRAM, cfg.VMDefaultVCPU)
 
-	server := httpapi.NewServer(authSvc, projectSvc, imageSvc, instanceSvc, jwtManager)
+	volSvc := service.NewVolumeService(repo, libvirtAdapter, cfg.QEMUImgPath, cfg.VMVolumesDir)
+
+	var instanceOpts []service.InstanceServiceOption
+	instanceOpts = append(instanceOpts, service.WithVolumes(volSvc))
+	if cfg.RedisURL != "" {
+		opt, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			log.Fatalf("redis url: %v", err)
+		}
+		rdb := redis.NewClient(opt)
+		defer func() { _ = rdb.Close() }()
+		instanceOpts = append(instanceOpts, service.WithStatsFetcher(&instancemetrics.RedisFetcher{RDB: rdb}))
+	}
+	instanceSvc := service.NewInstanceService(repo, queueClient, libvirtAdapter, cfg.VMDefaultRAM, cfg.VMDefaultVCPU, cfg.LibvirtBridge, instanceOpts...)
+
+	server := httpapi.NewServer(authSvc, projectSvc, imageSvc, instanceSvc, volSvc, jwtManager)
 	httpServer := &http.Server{
 		Addr:         cfg.HTTPAddr,
 		Handler:      server.Router(),

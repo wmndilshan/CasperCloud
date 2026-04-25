@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"caspercloud/internal/instancemetrics"
 	"caspercloud/internal/repository"
 	"caspercloud/internal/service"
 )
@@ -37,6 +38,26 @@ type docInstancesData struct {
 
 type docCreateInstanceAccepted struct {
 	Data service.CreateInstanceResult `json:"data"`
+}
+
+type docInstanceActionAccepted struct {
+	Data service.InstanceActionResult `json:"data"`
+}
+
+type docInstanceStatsData struct {
+	Data instancemetrics.Payload `json:"data"`
+}
+
+type docVolumeData struct {
+	Data repository.Volume `json:"data"`
+}
+
+type docVolumesData struct {
+	Data []repository.Volume `json:"data"`
+}
+
+type docNetworksData struct {
+	Data []repository.Network `json:"data"`
 }
 
 type docStatusOK struct {

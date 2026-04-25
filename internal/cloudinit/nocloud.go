@@ -9,10 +9,9 @@ import (
 	"strings"
 )
 
-// BuildNoCloudISO writes user-data and meta-data then builds a NoCloud seed ISO at isoPath.
-// cloudLocalds and genisoimage are optional explicit paths; when empty, the first available
-// tool in PATH is used (cloud-localds preferred, then genisoimage).
-func BuildNoCloudISO(ctx context.Context, workDir, isoPath, userData, instanceID, hostname, cloudLocalds, genisoimage string) error {
+// BuildNoCloudISO writes user-data, meta-data, optional network-config, then builds a NoCloud seed ISO at isoPath.
+// cloudLocalds and genisoimage are optional explicit paths; when empty, PATH is searched.
+func BuildNoCloudISO(ctx context.Context, workDir, isoPath, userData, instanceID, hostname, networkConfigYAML, cloudLocalds, genisoimage string) error {
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir workdir: %w", err)
 	}
@@ -25,13 +24,24 @@ func BuildNoCloudISO(ctx context.Context, workDir, isoPath, userData, instanceID
 	if err := os.WriteFile(metaPath, []byte(meta), 0o600); err != nil {
 		return fmt.Errorf("write meta-data: %w", err)
 	}
+	netPath := filepath.Join(workDir, "network-config")
+	hasNet := strings.TrimSpace(networkConfigYAML) != ""
+	if hasNet {
+		if err := os.WriteFile(netPath, []byte(networkConfigYAML), 0o600); err != nil {
+			return fmt.Errorf("write network-config: %w", err)
+		}
+	}
 
 	localds := cloudLocalds
 	if localds == "" {
 		localds, _ = exec.LookPath("cloud-localds")
 	}
 	if localds != "" {
-		cmd := exec.CommandContext(ctx, localds, "--disk-format", "iso", isoPath, userPath, metaPath)
+		args := []string{"--disk-format", "iso", isoPath, userPath, metaPath}
+		if hasNet {
+			args = append(args, netPath)
+		}
+		cmd := exec.CommandContext(ctx, localds, args...)
 		cmd.Dir = workDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -50,12 +60,16 @@ func BuildNoCloudISO(ctx context.Context, workDir, isoPath, userData, instanceID
 	if giso == "" {
 		return fmt.Errorf("no ISO builder found (install cloud-image-utils for cloud-localds, or genisoimage/mkisofs)")
 	}
-	cmd := exec.CommandContext(ctx, giso,
+	args := []string{
 		"-output", isoPath,
 		"-volid", "cidata",
 		"-joliet", "-rock",
 		userPath, metaPath,
-	)
+	}
+	if hasNet {
+		args = append(args, netPath)
+	}
+	cmd := exec.CommandContext(ctx, giso, args...)
 	cmd.Dir = workDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

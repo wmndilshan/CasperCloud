@@ -8,7 +8,7 @@
 *.out
 
 # Local toolchain (bootstrap Go, etc.)
-tools/
+.tools/
 
 # Go build / coverage
 bin/

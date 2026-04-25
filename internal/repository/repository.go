@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"net/netip"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -61,7 +63,7 @@ func (r *Repository) GetUserByID(ctx context.Context, userID uuid.UUID) (*User, 
 	return &u, nil
 }
 
-func (r *Repository) CreateProject(ctx context.Context, ownerID uuid.UUID, name string) (*Project, error) {
+func (r *Repository) CreateProject(ctx context.Context, ownerID uuid.UUID, name, defaultNetCIDR, defaultNetGateway, defaultBridge string) (*Project, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -82,6 +84,22 @@ func (r *Repository) CreateProject(ctx context.Context, ownerID uuid.UUID, name 
 		VALUES ($1, $2, 'owner')
 		ON CONFLICT DO NOTHING`, p.ID, ownerID)
 	if err != nil {
+		return nil, err
+	}
+
+	netID, err := r.InsertDefaultNetwork(ctx, tx, p.ID, defaultNetCIDR, defaultNetGateway, defaultBridge)
+	if err != nil {
+		return nil, err
+	}
+	pfx, err := netip.ParsePrefix(defaultNetCIDR)
+	if err != nil {
+		return nil, err
+	}
+	gw, err := netip.ParseAddr(defaultNetGateway)
+	if err != nil {
+		return nil, err
+	}
+	if err := SeedNetworkIPSlots(ctx, tx, netID, pfx, gw); err != nil {
 		return nil, err
 	}
 
@@ -208,37 +226,31 @@ func (r *Repository) DeleteImage(ctx context.Context, projectID, imageID uuid.UU
 	return nil
 }
 
-func (r *Repository) CreateInstance(ctx context.Context, projectID, imageID uuid.UUID, name, cloudInitData string, initialState string) (*Instance, error) {
-	row := r.pool.QueryRow(ctx, `
-		INSERT INTO instances (project_id, image_id, name, state, cloud_init_data)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, project_id, image_id, name, state, cloud_init_data, created_at, updated_at`,
-		projectID, imageID, name, initialState, cloudInitData)
-	var inst Instance
-	if err := row.Scan(&inst.ID, &inst.ProjectID, &inst.ImageID, &inst.Name, &inst.State, &inst.CloudInitData, &inst.CreatedAt, &inst.UpdatedAt); err != nil {
-		return nil, err
-	}
-	return &inst, nil
-}
-
 func (r *Repository) GetInstance(ctx context.Context, projectID, instanceID uuid.UUID) (*Instance, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, project_id, image_id, name, state, cloud_init_data, created_at, updated_at
+		SELECT id, project_id, image_id, name, state, cloud_init_data, network_id, mac_address, bridge_name, ipv4_address::text, network_config_yaml, created_at, updated_at
 		FROM instances
 		WHERE project_id = $1 AND id = $2`, projectID, instanceID)
 	var inst Instance
-	if err := row.Scan(&inst.ID, &inst.ProjectID, &inst.ImageID, &inst.Name, &inst.State, &inst.CloudInitData, &inst.CreatedAt, &inst.UpdatedAt); err != nil {
+	var netID sql.NullString
+	if err := row.Scan(&inst.ID, &inst.ProjectID, &inst.ImageID, &inst.Name, &inst.State, &inst.CloudInitData, &netID, &inst.MACAddress, &inst.BridgeName, &inst.IPv4Address, &inst.NetworkConfigYAML, &inst.CreatedAt, &inst.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
+	}
+	if netID.Valid {
+		u, err := uuid.Parse(netID.String)
+		if err == nil {
+			inst.NetworkID = &u
+		}
 	}
 	return &inst, nil
 }
 
 func (r *Repository) ListInstances(ctx context.Context, projectID uuid.UUID) ([]Instance, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, project_id, image_id, name, state, cloud_init_data, created_at, updated_at
+		SELECT id, project_id, image_id, name, state, cloud_init_data, network_id, mac_address, bridge_name, ipv4_address::text, network_config_yaml, created_at, updated_at
 		FROM instances
 		WHERE project_id = $1
 		ORDER BY created_at DESC`, projectID)
@@ -250,8 +262,15 @@ func (r *Repository) ListInstances(ctx context.Context, projectID uuid.UUID) ([]
 	instances := make([]Instance, 0)
 	for rows.Next() {
 		var inst Instance
-		if err := rows.Scan(&inst.ID, &inst.ProjectID, &inst.ImageID, &inst.Name, &inst.State, &inst.CloudInitData, &inst.CreatedAt, &inst.UpdatedAt); err != nil {
+		var netID sql.NullString
+		if err := rows.Scan(&inst.ID, &inst.ProjectID, &inst.ImageID, &inst.Name, &inst.State, &inst.CloudInitData, &netID, &inst.MACAddress, &inst.BridgeName, &inst.IPv4Address, &inst.NetworkConfigYAML, &inst.CreatedAt, &inst.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if netID.Valid {
+			u, err := uuid.Parse(netID.String)
+			if err == nil {
+				inst.NetworkID = &u
+			}
 		}
 		instances = append(instances, inst)
 	}

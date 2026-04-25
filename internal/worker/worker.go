@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"caspercloud/internal/queue"
 	"caspercloud/internal/service"
@@ -142,10 +143,34 @@ func (w *Worker) handleMessageBody(ctx context.Context, body []byte) error {
 	}
 
 	switch payload.Type {
-	case "instance.create":
+	case service.TaskTypeInstanceCreate:
 		return w.instanceSvc.HandleCreateTask(ctx, taskID, projectID, instanceID)
+	case service.TaskTypeInstanceStart:
+		return w.instanceSvc.HandleStartTask(ctx, taskID, projectID, instanceID)
+	case service.TaskTypeInstanceStop:
+		return w.instanceSvc.HandleStopTask(ctx, taskID, projectID, instanceID)
+	case service.TaskTypeInstanceReboot:
+		return w.instanceSvc.HandleRebootTask(ctx, taskID, projectID, instanceID)
+	case service.TaskTypeInstanceDestroy:
+		return w.instanceSvc.HandleDestroyTask(ctx, taskID, projectID, instanceID)
 	default:
 		log.Printf("caspercloud worker: unknown task type %q (ack)", payload.Type)
 		return nil
+	}
+}
+
+// RunStateSync periodically reconciles Postgres instance state with libvirt domain state.
+func (w *Worker) RunStateSync(ctx context.Context) {
+	t := time.NewTicker(20 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := w.instanceSvc.SyncHypervisorWithDB(ctx); err != nil {
+				log.Printf("caspercloud worker: state sync: %v", err)
+			}
+		}
 	}
 }

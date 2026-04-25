@@ -1,23 +1,13 @@
 package httpapi
 
 import (
-	"context"
 	"net/http"
 
+	"caspercloud/internal/apitypes"
 	"caspercloud/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
-
-type createInstanceRequest struct {
-	Name         string   `json:"name" validate:"required,min=1,max=128"`
-	ImageID      string   `json:"image_id" validate:"required,uuid"`
-	Hostname     string   `json:"hostname" validate:"required,min=1,max=253"`
-	Username     string   `json:"username" validate:"required,min=1,max=32"`
-	SSHPublicKey string   `json:"ssh_public_key" validate:"required,min=1,max=8192"`
-	Packages     []string `json:"packages" validate:"max=64,dive,max=128"`
-	RunCommands  []string `json:"run_commands" validate:"max=32,dive,max=2048"`
-}
 
 // handleCreateInstance enqueues instance creation.
 // @Summary      Create instance
@@ -25,7 +15,7 @@ type createInstanceRequest struct {
 // @Accept       json
 // @Produce      json
 // @Param        projectID  path      string                 true  "Project UUID"
-// @Param        body       body      createInstanceRequest  true  "Instance spec"
+// @Param        body       body      apitypes.CreateInstanceRequest  true  "Instance spec"
 // @Success      202        {object}  docCreateInstanceAccepted
 // @Failure      400        {object}  map[string]interface{}
 // @Failure      401        {object}  map[string]interface{}
@@ -39,13 +29,13 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req createInstanceRequest
+	var req apitypes.CreateInstanceRequest
 	if err := decodeAndValidate(r, &req); err != nil {
 		respondInvalidRequest(w, err)
 		return
 	}
 	imageID := uuid.MustParse(req.ImageID)
-	res, err := s.instanceSvc.CreateAsync(r.Context(), projectID, service.CreateInstanceInput{
+	in := service.CreateInstanceInput{
 		Name:         req.Name,
 		ImageID:      imageID,
 		Hostname:     req.Hostname,
@@ -53,7 +43,16 @@ func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		SSHPublicKey: req.SSHPublicKey,
 		Packages:     req.Packages,
 		RunCommands:  req.RunCommands,
-	})
+	}
+	if req.NetworkID != "" {
+		nid, perr := uuid.Parse(req.NetworkID)
+		if perr != nil {
+			writeError(w, http.StatusBadRequest, "invalid network id")
+			return
+		}
+		in.NetworkID = &nid
+	}
+	res, err := s.instanceSvc.CreateAsync(r.Context(), projectID, in)
 	if err != nil {
 		status, msg := mapRepoError(err)
 		if status == http.StatusInternalServerError {
@@ -97,6 +96,42 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusOK, inst)
 }
 
+// handleGetInstanceStats returns the latest libvirt-backed metrics snapshot (requires Redis populated by the worker).
+// @Summary      Instance hardware stats
+// @Tags         instances
+// @Produce      json
+// @Param        projectID   path  string  true  "Project UUID"
+// @Param        instanceID  path  string  true  "Instance UUID"
+// @Success      200         {object}  docInstanceStatsData
+// @Failure      400         {object}  map[string]interface{}
+// @Failure      401         {object}  map[string]interface{}
+// @Failure      403         {object}  map[string]interface{}
+// @Failure      404         {object}  map[string]interface{}
+// @Failure      503         {object}  map[string]interface{}
+// @Router       /v1/projects/{projectID}/instances/{instanceID}/stats [get]
+// @Security     BearerAuth
+func (s *Server) handleGetInstanceStats(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := s.requireProjectAccess(w, r)
+	if !ok {
+		return
+	}
+	instanceID, err := uuid.Parse(chi.URLParam(r, "instanceID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid instance id")
+		return
+	}
+	stats, err := s.instanceSvc.GetInstanceStats(r.Context(), projectID, instanceID)
+	if err != nil {
+		status, msg := mapRepoError(err)
+		if status == http.StatusInternalServerError {
+			msg = err.Error()
+		}
+		writeError(w, status, msg)
+		return
+	}
+	writeData(w, http.StatusOK, stats)
+}
+
 // handleListInstances lists instances in the project.
 // @Summary      List instances
 // @Tags         instances
@@ -121,24 +156,55 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 	writeData(w, http.StatusOK, instances)
 }
 
-func (s *Server) handleStartInstance(w http.ResponseWriter, r *http.Request) {
-	s.handleInstanceAction(w, r, s.instanceSvc.Start)
+// handleInstanceActions enqueues start, stop, reboot, or destroy for the worker.
+// @Summary      Instance lifecycle action
+// @Tags         instances
+// @Accept       json
+// @Produce      json
+// @Param        projectID   path  string                 true  "Project UUID"
+// @Param        instanceID  path  string                 true  "Instance UUID"
+// @Param        body        body  apitypes.InstanceActionRequest    true  "Action"
+// @Success      202         {object}  docInstanceActionAccepted
+// @Failure      400         {object}  map[string]interface{}
+// @Failure      401         {object}  map[string]interface{}
+// @Failure      403         {object}  map[string]interface{}
+// @Failure      404         {object}  map[string]interface{}
+// @Failure      500         {object}  map[string]interface{}
+// @Router       /v1/projects/{projectID}/instances/{instanceID}/actions [post]
+// @Security     BearerAuth
+func (s *Server) handleInstanceActions(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := s.requireProjectAccess(w, r)
+	if !ok {
+		return
+	}
+	instanceID, err := uuid.Parse(chi.URLParam(r, "instanceID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid instance id")
+		return
+	}
+	var req apitypes.InstanceActionRequest
+	if err := decodeAndValidate(r, &req); err != nil {
+		respondInvalidRequest(w, err)
+		return
+	}
+	res, err := s.instanceSvc.RequestInstanceAction(r.Context(), projectID, instanceID, req.Action)
+	if err != nil {
+		status, msg := mapRepoError(err)
+		if status == http.StatusInternalServerError {
+			msg = err.Error()
+		}
+		writeError(w, status, msg)
+		return
+	}
+	writeData(w, http.StatusAccepted, res)
 }
 
-func (s *Server) handleStopInstance(w http.ResponseWriter, r *http.Request) {
-	s.handleInstanceAction(w, r, s.instanceSvc.Stop)
-}
-
-func (s *Server) handleRebootInstance(w http.ResponseWriter, r *http.Request) {
-	s.handleInstanceAction(w, r, s.instanceSvc.Reboot)
-}
-
-// handleDeleteInstance deletes an instance.
-// @Summary      Delete instance
+// handleDeleteInstance enqueues destroy (same as action "destroy") for backward-compatible clients.
+// @Summary      Delete instance (async destroy)
 // @Tags         instances
 // @Param        projectID   path  string  true  "Project UUID"
 // @Param        instanceID  path  string  true  "Instance UUID"
-// @Success      204         "No Content"
+// @Success      202         {object}  docInstanceActionAccepted
 // @Failure      400         {object}  map[string]interface{}
 // @Failure      401         {object}  map[string]interface{}
 // @Failure      403         {object}  map[string]interface{}
@@ -156,7 +222,55 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid instance id")
 		return
 	}
-	if err := s.instanceSvc.Delete(r.Context(), projectID, instanceID); err != nil {
+	res, err := s.instanceSvc.RequestInstanceAction(r.Context(), projectID, instanceID, "destroy")
+	if err != nil {
+		status, msg := mapRepoError(err)
+		if status == http.StatusInternalServerError {
+			msg = err.Error()
+		}
+		writeError(w, status, msg)
+		return
+	}
+	writeData(w, http.StatusAccepted, res)
+}
+
+// handleAttachVolume hot-attaches a project volume to a running instance.
+// @Summary      Attach volume to instance
+// @Tags         instances
+// @Accept       json
+// @Produce      json
+// @Param        projectID   path  string                      true  "Project UUID"
+// @Param        instanceID  path  string                      true  "Instance UUID"
+// @Param        body        body  apitypes.InstanceVolumeAttachRequest  true  "Volume to attach"
+// @Success      204         "No Content"
+// @Failure      400         {object}  map[string]interface{}
+// @Failure      401         {object}  map[string]interface{}
+// @Failure      403         {object}  map[string]interface{}
+// @Failure      404         {object}  map[string]interface{}
+// @Failure      409         {object}  map[string]interface{}
+// @Router       /v1/projects/{projectID}/instances/{instanceID}/attach [post]
+// @Security     BearerAuth
+func (s *Server) handleAttachVolume(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := s.requireProjectAccess(w, r)
+	if !ok {
+		return
+	}
+	instanceID, err := uuid.Parse(chi.URLParam(r, "instanceID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid instance id")
+		return
+	}
+	var attachReq apitypes.InstanceVolumeAttachRequest
+	if err := decodeAndValidate(r, &attachReq); err != nil {
+		respondInvalidRequest(w, err)
+		return
+	}
+	volumeID, perr := uuid.Parse(attachReq.VolumeID)
+	if perr != nil {
+		writeError(w, http.StatusBadRequest, "invalid volume id")
+		return
+	}
+	if err := s.volumeSvc.AttachVolume(r.Context(), projectID, instanceID, volumeID); err != nil {
 		status, msg := mapRepoError(err)
 		if status == http.StatusInternalServerError {
 			msg = err.Error()
@@ -167,23 +281,22 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleInstanceAction runs start/stop/reboot.
-// @Summary      Instance lifecycle action
+// handleDetachVolume detaches a volume from an instance.
+// @Summary      Detach volume from instance
 // @Tags         instances
+// @Accept       json
 // @Produce      json
-// @Param        projectID   path  string  true  "Project UUID"
-// @Param        instanceID  path  string  true  "Instance UUID"
-// @Success      200         {object}  docStatusOK
+// @Param        projectID   path  string                      true  "Project UUID"
+// @Param        instanceID  path  string                      true  "Instance UUID"
+// @Param        body        body  apitypes.InstanceVolumeAttachRequest  true  "Volume to detach"
+// @Success      204         "No Content"
 // @Failure      400         {object}  map[string]interface{}
 // @Failure      401         {object}  map[string]interface{}
 // @Failure      403         {object}  map[string]interface{}
 // @Failure      404         {object}  map[string]interface{}
-// @Failure      500         {object}  map[string]interface{}
-// @Router       /v1/projects/{projectID}/instances/{instanceID}/start [post]
-// @Router       /v1/projects/{projectID}/instances/{instanceID}/stop [post]
-// @Router       /v1/projects/{projectID}/instances/{instanceID}/reboot [post]
+// @Router       /v1/projects/{projectID}/instances/{instanceID}/detach [post]
 // @Security     BearerAuth
-func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request, fn func(context.Context, uuid.UUID, uuid.UUID) error) {
+func (s *Server) handleDetachVolume(w http.ResponseWriter, r *http.Request) {
 	projectID, ok := s.requireProjectAccess(w, r)
 	if !ok {
 		return
@@ -193,7 +306,17 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request, fn
 		writeError(w, http.StatusBadRequest, "invalid instance id")
 		return
 	}
-	if err := fn(r.Context(), projectID, instanceID); err != nil {
+	var detachReq apitypes.InstanceVolumeAttachRequest
+	if err := decodeAndValidate(r, &detachReq); err != nil {
+		respondInvalidRequest(w, err)
+		return
+	}
+	volumeID, perr := uuid.Parse(detachReq.VolumeID)
+	if perr != nil {
+		writeError(w, http.StatusBadRequest, "invalid volume id")
+		return
+	}
+	if err := s.volumeSvc.DetachVolume(r.Context(), projectID, instanceID, volumeID); err != nil {
 		status, msg := mapRepoError(err)
 		if status == http.StatusInternalServerError {
 			msg = err.Error()
@@ -201,5 +324,5 @@ func (s *Server) handleInstanceAction(w http.ResponseWriter, r *http.Request, fn
 		writeError(w, status, msg)
 		return
 	}
-	writeData(w, http.StatusOK, map[string]string{"status": "ok"})
+	w.WriteHeader(http.StatusNoContent)
 }
