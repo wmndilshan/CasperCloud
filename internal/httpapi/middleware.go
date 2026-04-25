@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"caspercloud/internal/auth"
 	"github.com/google/uuid"
 )
 

@@ -7,12 +7,27 @@
 *.test
 *.out
 
+# Local toolchain (bootstrap Go, etc.)
+tools/
+
 # Go build / coverage
 bin/
 dist/
 coverage.out
 cover.out
+coverage.html
 *.coverprofile
+profile.cov
+*.pprof
+*.prof
+
+# Delve / IDE debug binary (often written to repo root)
+__debug_bin
+__debug_bin.*
+
+# Docker Compose local overrides (secrets, bind mounts)
+docker-compose.override.yml
+compose.override.yml
 
 # Vendor (uncomment if you vendor dependencies)
 # vendor/
@@ -21,6 +36,7 @@ cover.out
 .env
 .env.*
 !.env.example
+.envrc
 
 # Logs / runtime
 *.log
@@ -35,6 +51,8 @@ tmp/
 # OS files
 .DS_Store
 Thumbs.db
+*~
+*.bak
 
 # Local docker data (if created in repo)
 .pgdata/
